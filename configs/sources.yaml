@@ -1,0 +1,22 @@
+# Every external URL the code downloads, with the page it was found on and the retrieval date.
+eia930_balance_2018_jan_jun:
+  url: https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_BALANCE_2018_Jan_Jun.csv
+  found_on: https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_File_List_Meta.csv
+  found_via: Hourly Electric Grid Monitor, Download Data, column Six-Month Files (https://www.eia.gov/electricity/gridmonitor/dashboard/electric_overview/US48/US48)
+  documentation: https://www.eia.gov/electricity/930-content/about.html
+  retrieved: 2026-11-11
+eia930_balance_2018_jul_dec:
+  url: https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_BALANCE_2018_Jul_Dec.csv
+  found_on: https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_File_List_Meta.csv
+  found_via: Hourly Electric Grid Monitor, Download Data, column Six-Month Files (https://www.eia.gov/electricity/gridmonitor/dashboard/electric_overview/US48/US48)
+  documentation: https://www.eia.gov/electricity/930-content/about.html
+  retrieved: 2026-11-11
+eia861_2018:
+  url: https://www.eia.gov/electricity/data/eia861/archive/zip/f8612018.zip
+  found_on: https://www.eia.gov/electricity/data/eia861/
+  retrieved: 2026-11-11
+eia_state_profile_tx:
+  url: https://www.eia.gov/electricity/state/xls/SEP%20Tables%20for%20TX.xlsx
+  found_on: https://www.eia.gov/electricity/state/texas/state_tables.php
+  found_via: Texas State Electricity Profile, link Full data tables (https://www.eia.gov/electricity/state/texas/)
+  retrieved: 2026-11-11

@@ -1,0 +1,32 @@
+# Settings of the fit target, read by dxsew.fit_target.
+balancing_area: ERCO
+year: 2018
+state: TX
+classes_kept: [residential, commercial]
+classes_removed: [industrial, transportation]
+
+# The two ASSUMPTION texts. The run fills the placeholders with the computed values
+# and writes the filled texts to the summary file.
+assumptions:
+  removed_load: >-
+    ASSUMPTION: ERCOT industrial and transportation load is a constant {removed_mw:.0f} MW
+    in every hour of {year}, equal to their EIA-861 {year} sales in balancing authority
+    {balancing_area} divided by {hours:,} hours. Hourly industrial load for ERCOT is not
+    published; the constant removes the right annual energy and leaves its hourly shape
+    inside the target.
+  losses: >-
+    ASSUMPTION: transmission and distribution losses are a constant {loss_share:.2%} of
+    ERCOT demand in every hour of {year}, the Texas {year} share from EIA's State
+    Electricity Profile, Table 10. Losses rise with the square of current, so the true
+    share is higher at peak and lower at night.
+
+# ERCOT's own published figures for the year, for comparison only (check 6).
+ercot_published:
+  source: https://www.ercot.com/files/docs/2019/04/16/ERCOT_2018_State_of_the_Grid_Report.pdf
+  source_page: 2
+  retrieved: 2026-11-11
+  peak_mw: 73473
+  peak_text: "On July 19, the grid operator set a new all-time system-wide peak demand record when electricity demand reached 73,473 MW between 4 and 5 p.m."
+  peak_local_hour_ending: "2018-07-19T17:00:00-05:00"
+  annual_energy_mwh: 376000000
+  annual_energy_text: "Consumers used more than 376 billion kilowatt-hours of energy in 2018"
