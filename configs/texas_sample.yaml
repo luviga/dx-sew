@@ -1,0 +1,69 @@
+# Settings of the stratified Texas sample of whole SMART-DS substations.
+# Method note with every source: docs/texas_sample.md.
+
+release:
+  # SMART-DS v0.9 Full Texas, year 2018, on the OEDI data lake (public bucket).
+  # https://data.openei.org/s3_viewer?bucket=oedi-data-lake&prefix=SMART-DS%2Fv0.9%2F2018%2FFull_Texas%2F
+  bucket_url: "https://oedi-data-lake.s3.amazonaws.com"
+  prefix: "SMART-DS/v0.9/2018/Full_Texas/"
+  # Tree of one sub-region that holds one folder per substation.
+  opendss_tree: "scenarios/base_timeseries/opendss"
+  # Folders of that tree that are not substations.
+  not_substations: ["subtransmission"]
+  # Folder of the load-data parquets, shared by all sub-regions.
+  load_data_folder: "load_data"
+  # Name of the saved listing under <data_root>/oedi.
+  listing_file: "full_texas_2018_listing.parquet"
+
+geography:
+  counties:
+    # U.S. Census Bureau, TIGER/Line 2018 county boundaries.
+    url: "https://www2.census.gov/geo/tiger/TIGER2018/COUNTY/tl_2018_us_county.zip"
+    # State FIPS code of Texas, field STATEFP of the same file.
+    state_fips: "48"
+  balancing_area:
+    # U.S. Energy Information Administration, Form EIA-861 detailed data, 2018.
+    # Page: https://www.eia.gov/electricity/data/eia861/
+    url: "https://www.eia.gov/electricity/data/eia861/archive/zip/f8612018.zip"
+    state: "TX"
+    # Balancing authority code of ERCOT in the sales sheet.
+    member_code: "ERCO"
+    territory_file: "Service_Territory_2018.xlsx"
+    territory_sheet: "Counties_States"
+    sales_file: "Sales_Ult_Cust_2018.xlsx"
+    sales_sheet: "States"
+    # Row of the sales sheet that holds the column names (first row is 0).
+    sales_header_row: 2
+  climate_zone:
+    # ResStock 2024 release 2 baseline metadata of Texas, placed by the user
+    # under eulp_metadata_root (configs/local.yaml).
+    # https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_tmy3_release_2/
+    metadata_file: "Metadata_TX_Residential/TX_baseline_metadata_and_annual_results.csv"
+    county_column: "in.county"
+    zone_column: "in.building_america_climate_zone"
+
+sample:
+  # Strata: kind of sub-region (U or R, the last letter of its name) crossed
+  # with the Building America climate zone of the county of the substation.
+  selection_rule: "ASSUMPTION: within each stratum, substations are ordered by load count and drawn by systematic selection from a random start with seed 555, so the sample spreads over substation sizes. A stratum with fewer substations than the target is taken whole."
+  # The seed is random_seed of pipeline_config.yaml of DeltaE/dss-eulp-coupling.
+  seed: 555
+  # Substations drawn and staged per stratum.
+  per_stratum: 2
+  # Sizes of the size table (substations per stratum); estimates only.
+  sizes: [1, 2, 3, 5]
+
+staging:
+  # Folder under smart_ds_base (configs/local.yaml) that receives the sample.
+  folder: "SMART-DS_v0.9_2018_Full_Texas"
+  # Flat folder of the load-data parquets inside it.
+  parquet_folder: "parquet_data"
+  # Layout of one staged substation below the folder:
+  # <subregion>/<opendss_relpath>/<substation>/
+  opendss_relpath: "base_timeseries/opendss"
+
+coupling:
+  # Values written into the settings of DeltaE/dss-eulp-coupling.
+  topology_state: "TX"
+  donor_id: "TX"
+  status: "ready"
