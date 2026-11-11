@@ -24,16 +24,24 @@ geography:
   balancing_area:
     # U.S. Energy Information Administration, Form EIA-861 detailed data, 2018.
     # Page: https://www.eia.gov/electricity/data/eia861/
+    # The utility data file reports the ISOs and RTOs each utility operates in;
+    # PUDL publishes it as core_eia861__yearly_utility_data_rto,
+    # https://data.catalyst.coop/preview/pudl/core_eia861__yearly_utility_data_rto
     url: "https://www.eia.gov/electricity/data/eia861/archive/zip/f8612018.zip"
     state: "TX"
-    # Balancing authority code of ERCOT in the sales sheet.
-    member_code: "ERCO"
+    # ISO or RTO of the frame (decision K52): a county is in the frame when
+    # every utility serving it reports operating in this RTO. The name is a
+    # column of the RTO group of the utility data file (CAISO, ERCOT, PJM,
+    # NYISO, SPP, MISO, ISONE).
+    rto: "ERCOT"
     territory_file: "Service_Territory_2018.xlsx"
     territory_sheet: "Counties_States"
-    sales_file: "Sales_Ult_Cust_2018.xlsx"
-    sales_sheet: "States"
-    # Row of the sales sheet that holds the column names (first row is 0).
-    sales_header_row: 2
+    utility_file: "Utility_Data_2018.xlsx"
+    utility_sheet: "States"
+    # Row of the utility data sheet with the column names (first row is 0);
+    # the row above it holds the column groups.
+    utility_header_row: 1
+    rto_group: "Operating in these RTOs"
   climate_zone:
     # ResStock 2024 release 2 baseline metadata of Texas, placed by the user
     # under eulp_metadata_root (configs/local.yaml).

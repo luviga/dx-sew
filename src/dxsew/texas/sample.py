@@ -114,13 +114,14 @@ def geography_columns(
     status: pd.DataFrame,
     zone_of: dict[str, str],
     zone_filled: list[str],
+    member: str,
 ) -> pd.DataFrame:
-    """Frame with county, balancing-area status, zone, frame membership and stratum.
+    """Frame with county, RTO status, zone, frame membership and stratum.
 
     ``status`` is the county table of ``geo.membership``; ``zone_of`` and
     ``zone_filled`` come from ``geo.county_zones``. A substation is in the
-    frame when its county has the member status; its stratum is its kind and
-    the zone of its county.
+    frame when its county has the status ``member`` (the RTO of the settings);
+    its stratum is its kind and the zone of its county.
     """
     frame = frame.copy()
     found = geo.assign_counties(frame["centroid_x"], frame["centroid_y"], counties)
@@ -133,13 +134,13 @@ def geography_columns(
     frame.loc[has_county & frame["ba_status"].isna(), "ba_status"] = geo.NO_DATA
     frame["zone"] = frame["county_geoid"].map(zone_of)
     frame["zone_from_nearest_county"] = frame["county_geoid"].isin(zone_filled)
-    frame["in_frame"] = frame["ba_status"] == geo.MEMBER
+    frame["in_frame"] = frame["ba_status"] == member
     frame["stratum"] = (frame["kind"] + "|" + frame["zone"]).where(frame["in_frame"])
     return frame
 
 
 def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd.DataFrame, dict]:
-    """Add county, balancing-area status, climate zone and stratum to the frame.
+    """Add county, RTO status, climate zone and stratum to the frame.
 
     When the centroids do not read as longitudes and latitudes inside the
     state, no geography is assigned and the strata are the kinds alone.
@@ -179,7 +180,7 @@ def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd
     notes["counties_with_several_zones"] = several
     notes["counties_zone_from_nearest"] = [c.name for c in counties if c.geoid in set(filled)]
 
-    frame = geography_columns(frame, counties, status, zone_of, filled)
+    frame = geography_columns(frame, counties, status, zone_of, filled, balancing["rto"])
     notes["substations_outside_every_county"] = int(located.sum() - frame["county"].notna().sum())
     return frame, notes
 
@@ -254,8 +255,22 @@ def stratum_summary(frame: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def county_summary(frame: pd.DataFrame) -> pd.DataFrame:
+    """Substations, feeders and loads by county and RTO status, for counties outside the frame."""
+    if "ba_status" not in frame:
+        return pd.DataFrame()
+    out = frame[~frame["in_frame"] & frame["county"].notna()]
+    return (
+        out.groupby(["ba_status", "county"])
+        .agg(substations=("substation", "size"), feeders=("feeders", "sum"), loads=("loads", "sum"))
+        .reset_index()
+        .sort_values(["ba_status", "substations", "county"], ascending=[True, False, True], kind="mergesort")
+        .reset_index(drop=True)
+    )
+
+
 def status_summary(frame: pd.DataFrame) -> pd.DataFrame:
-    """Substations, feeders and loads by balancing-area status (missing: no county)."""
+    """Substations, feeders and loads by RTO status (missing: no county)."""
     if "ba_status" not in frame:
         return pd.DataFrame()
     return (
@@ -300,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, value in notes.items():
         print(f"{name}: {value}")
     print(status_summary(frame).to_string(index=False))
+    write_csv(county_summary(frame), out / f"counties_outside_frame_{stamp}.csv")
     print(stratum_summary(frame).to_string(index=False))
 
     rule = settings["sample"]

@@ -20,45 +20,56 @@ COUNTIES = [
 
 SOURCE = {
     "state": "ZZ",
-    "member_code": "AREA",
+    "rto": "AREA",
     "territory_file": "territory.xlsx",
     "territory_sheet": "Counties_States",
-    "sales_file": "sales.xlsx",
-    "sales_sheet": "States",
-    "sales_header_row": 2,
+    "utility_file": "utility.xlsx",
+    "utility_sheet": "States",
+    "utility_header_row": 1,
+    "rto_group": "Operating in these RTOs",
 }
 
 
 @pytest.fixture
 def eia_zip(tmp_path):
+    """Territory and utility data in the layout of EIA-861.
+
+    Utility 1 operates in AREA, utility 3 in ELSE, utility 4 in both, utility 5
+    reports no RTO, and utility 2 has no utility data row in state ZZ.
+    """
     territory = pd.DataFrame(
         [
             (2018, 1, "Inside Coop", "ZZ", "Alpha"),
-            (2018, 2, "No Sales Row City", "ZZ", "Alpha"),
+            (2018, 2, "No Row City", "ZZ", "Alpha"),
             (2018, 1, "Inside Coop", "ZZ", "Beta"),
             (2018, 3, "Outside Power", "ZZ", "Beta"),
             (2018, 3, "Outside Power", "ZZ", "DeWitt"),
-            (2018, 2, "No Sales Row City", "ZZ", "Delta"),
+            (2018, 5, "Blank Muni", "ZZ", "DeWitt"),
+            (2018, 2, "No Row City", "ZZ", "Delta"),
+            (2018, 4, "Both Coop", "ZZ", "Gamma"),
             (2018, 1, "Inside Coop", "YY", "Alpha"),
         ],
         columns=["Data Year", "Utility Number", "Utility Name", "State", "County"],
     )
-    sales_rows = [
-        ["Utility Characteristics", None, None, None, None],
-        [None, None, None, None, None],
-        ["Data Year", "Utility Number", "Utility Name", "State", "BA Code"],
-        [2018, 1, "Inside Coop", "ZZ", "AREA"],
-        [2018, 3, "Outside Power", "ZZ", "ELSE"],
-        [2018, 2, "No Sales Row City", "YY", "AREA"],
+    group = ["Utility Characteristics", None, None, None, "Operating in these RTOs", None, None, "Other Activities"]
+    names = ["Data Year", "Utility Number", "Utility Name", "State", "AREA", "ELSE", "Other", "Bundled"]
+    utility_rows = [
+        group,
+        names,
+        [2018, 1, "Inside Coop", "ZZ", "Y", None, None, "Y"],
+        [2018, 3, "Outside Power", "ZZ", None, "Y", "N", "Y"],
+        [2018, 4, "Both Coop", "ZZ", "Y", "Y", None, None],
+        [2018, 5, "Blank Muni", "ZZ", None, None, None, "Y"],
+        [2018, 2, "No Row City", "YY", "Y", None, None, "Y"],
     ]
     territory.to_excel(tmp_path / "territory.xlsx", sheet_name="Counties_States", index=False)
-    pd.DataFrame(sales_rows).to_excel(
-        tmp_path / "sales.xlsx", sheet_name="States", index=False, header=False
+    pd.DataFrame(utility_rows).to_excel(
+        tmp_path / "utility.xlsx", sheet_name="States", index=False, header=False
     )
     path = tmp_path / "eia.zip"
     with zipfile.ZipFile(path, "w") as archive:
         archive.write(tmp_path / "territory.xlsx", "territory.xlsx")
-        archive.write(tmp_path / "sales.xlsx", "sales.xlsx")
+        archive.write(tmp_path / "utility.xlsx", "utility.xlsx")
     return path
 
 
@@ -96,16 +107,48 @@ def test_gisjoin_and_name_key():
     assert geo.name_key("De Witt") == geo.name_key("DeWitt") == "dewitt"
 
 
-def test_membership_status_per_county(eia_zip):
-    table, counts = geo.membership(eia_zip, SOURCE)
+def test_utility_rtos_read_the_rto_group(eia_zip):
+    rtos = geo.utility_rtos(eia_zip, SOURCE)
+    assert rtos.to_dict() == {
+        1: frozenset({"AREA"}),
+        3: frozenset({"ELSE"}),
+        4: frozenset({"AREA", "ELSE"}),
+        5: frozenset(),
+    }
+
+
+def test_membership_three_labels_per_county(eia_zip):
+    table, _ = geo.membership(eia_zip, SOURCE)
     status = dict(zip(table["county_eia"], table["status"]))
     assert status == {
-        "Alpha": geo.MEMBER,  # the utility without a sales row is left out
+        "Alpha": "AREA",  # the utility without a utility data row is left out
         "Beta": geo.PARTIAL,
-        "DeWitt": geo.OUTSIDE,
+        "DeWitt": geo.OUTSIDE,  # a utility reporting no RTO does not operate in AREA
         "Delta": geo.NO_DATA,
+        "Gamma": "AREA",  # operating in two RTOs, one of them AREA
     }
-    assert counts == {"utilities_in_territory_sheet": 3, "utilities_without_sales_row": 1}
+
+
+def test_membership_counts_left_out_utilities(eia_zip):
+    _, counts = geo.membership(eia_zip, SOURCE)
+    assert counts["utilities_in_territory_sheet"] == 5
+    assert counts["utilities_without_utility_row"] == 1
+    assert counts["left_out_utilities"] == ["2 No Row City"]
+    assert counts["utilities_reporting_no_rto"] == 1
+    assert counts["utilities_in_rto"] == 2
+
+
+def test_membership_follows_the_rto_setting(eia_zip):
+    table, counts = geo.membership(eia_zip, {**SOURCE, "rto": "ELSE"})
+    status = dict(zip(table["county_eia"], table["status"]))
+    assert status == {
+        "Alpha": geo.OUTSIDE,
+        "Beta": geo.PARTIAL,
+        "DeWitt": geo.PARTIAL,
+        "Delta": geo.NO_DATA,
+        "Gamma": "ELSE",
+    }
+    assert counts["utilities_in_rto"] == 2
 
 
 def test_climate_zones_and_nearest_county_fill(tmp_path):
@@ -138,10 +181,10 @@ def test_county_and_stratum_of_a_few_substations(eia_zip):
     )
     status, _ = geo.membership(eia_zip, SOURCE)
     zone_of = {"99001": "Hot-Humid", "99003": "Hot-Humid", "99005": "Hot-Dry", "99007": "Hot-Dry"}
-    result = geography_columns(frame, COUNTIES, status, zone_of, ["99003"])
+    result = geography_columns(frame, COUNTIES, status, zone_of, ["99003"], "AREA")
     assert result["county"].tolist()[:4] == ["Alpha", "Beta", "Alpha", "De Witt"]
     assert pd.isna(result["county"].iloc[4])
-    assert result["ba_status"].tolist()[:4] == [geo.MEMBER, geo.PARTIAL, geo.MEMBER, geo.OUTSIDE]
+    assert result["ba_status"].tolist()[:4] == ["AREA", geo.PARTIAL, "AREA", geo.OUTSIDE]
     assert result["in_frame"].tolist() == [True, False, True, False, False]
     assert result["stratum"].tolist()[0] == "U|Hot-Humid"
     assert result["stratum"].tolist()[2] == "R|Hot-Humid"

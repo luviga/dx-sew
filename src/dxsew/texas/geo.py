@@ -1,12 +1,15 @@
-"""County, balancing-area membership and climate zone of a substation.
+"""County, RTO membership and climate zone of a substation.
 
 Sources (the URLs are settings in ``configs/texas_sample.yaml``):
 
 - County boundaries: U.S. Census Bureau, TIGER/Line 2018 counties,
   https://www2.census.gov/geo/tiger/TIGER2018/COUNTY/tl_2018_us_county.zip
-- Utilities per county and their balancing authority: U.S. Energy Information
-  Administration, Form EIA-861 detailed data files, 2018,
-  https://www.eia.gov/electricity/data/eia861/
+- Utilities per county and the ISOs and RTOs each utility operates in: U.S.
+  Energy Information Administration, Form EIA-861 detailed data files, 2018
+  (service territory and utility data files),
+  https://www.eia.gov/electricity/data/eia861/ ; the same utility data are
+  published by PUDL as ``core_eia861__yearly_utility_data_rto``,
+  https://data.catalyst.coop/preview/pudl/core_eia861__yearly_utility_data_rto
 - Climate zone per county: ResStock 2024 release 2 metadata (columns
   ``in.county`` and ``in.building_america_climate_zone``),
   https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_tmy3_release_2/
@@ -27,7 +30,8 @@ from shapely import STRtree
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
-MEMBER, PARTIAL, OUTSIDE, NO_DATA = "ERCOT", "partial", "outside", "no_sales_row"
+PARTIAL, OUTSIDE, NO_DATA = "partial", "outside", "no_utility_row"
+# The member status of a county is the RTO name of the settings (``rto``).
 
 
 @dataclass(frozen=True)
@@ -109,42 +113,72 @@ def name_key(name: str) -> str:
     return re.sub(r"[^a-z]", "", name.lower())
 
 
-def _sheet(zip_path: Path, member: str, sheet: str, header: int) -> pd.DataFrame:
+def _sheet(zip_path: Path, member: str, sheet: str, header) -> pd.DataFrame:
     with zipfile.ZipFile(zip_path) as archive:
         return pd.read_excel(io.BytesIO(archive.read(member)), sheet_name=sheet, header=header)
 
 
-def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
-    """Balancing-area status of every county of the state, from EIA-861.
+def utility_rtos(zip_path: Path, source: dict) -> pd.Series:
+    """ISOs and RTOs each utility of the state reports operating in, from EIA-861.
 
-    The service territory sheet lists the counties each utility serves; the
-    sales to ultimate customers sheet gives the balancing authority code of
-    each utility in the state. A county is ``ERCOT`` when every utility that
-    serves it has only the member code, ``partial`` when some have it,
-    ``outside`` when none has it. A utility with no sales row in the state is
-    left out; a county left with no utility is ``no_sales_row``.
+    The utility data sheet has two header rows: a group row whose group
+    ``source["rto_group"]`` ("Operating in these RTOs") spans one column per
+    ISO or RTO, and a row of column names below it. A utility operates in an
+    RTO when its cell holds ``Y``; ``N`` and a blank cell both mean it does not
+    report operating there. Rows are kept by state; a utility with several rows
+    in the state operates in every RTO any of its rows reports.
+
+    Returns ``utility number -> frozenset of RTO names``, one entry per utility
+    with a row in the state.
+    """
+    raw = _sheet(zip_path, source["utility_file"], source["utility_sheet"], None)
+    header = source["utility_header_row"]
+    group = raw.iloc[header - 1].ffill().astype(str).str.strip()
+    names = raw.iloc[header].astype(str).str.strip()
+    number_at = names[names == "Utility Number"].index[0]
+    state_at = names[names == "State"].index[0]
+    rto_at = [i for i in raw.columns if group[i] == source["rto_group"]]
+    if not rto_at:
+        raise ValueError(f"No column group {source['rto_group']!r} in {source['utility_file']}.")
+    body = raw.iloc[header + 1 :]
+    body = body[body[state_at] == source["state"]]
+    rtos: dict[int, set[str]] = {}
+    for _, row in body.iterrows():
+        found = {names[i] for i in rto_at if str(row[i]).strip().upper() == "Y"}
+        rtos.setdefault(int(row[number_at]), set()).update(found)
+    return pd.Series({number: frozenset(found) for number, found in rtos.items()}, dtype=object)
+
+
+def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
+    """RTO status of every county of the state, from EIA-861 (decision K52).
+
+    The service territory sheet lists the utilities serving each county; the
+    utility data sheet gives the ISOs and RTOs each utility reports operating
+    in (``utility_rtos``). With ``rto = source["rto"]``, a county is ``rto``
+    (for example ``ERCOT``) when every utility serving it operates in ``rto``,
+    ``partial`` when some do, and ``outside`` when none do. A utility with no
+    utility data row in the state is left out of its counties and counted; a
+    county left with no utility is ``no_utility_row``.
 
     Returns one row per county (``county_key``, ``county_eia``, ``status``,
-    ``utilities``, ``utilities_with_sales_row``) and the counts of utilities.
+    ``utilities``, ``utilities_with_row``, ``utilities_in_rto``) and counts of
+    utilities, with the left-out utilities listed.
     """
-    state, code = source["state"], source["member_code"]
+    state, rto = source["state"], source["rto"]
     territory = _sheet(zip_path, source["territory_file"], source["territory_sheet"], 0)
-    sales = _sheet(zip_path, source["sales_file"], source["sales_sheet"], source["sales_header_row"])
     territory = territory[territory["State"] == state]
-    sales = sales[(sales["State"] == state) & sales["BA Code"].notna()]
-    codes = sales.groupby("Utility Number")["BA Code"].agg(lambda values: frozenset(values))
+    rtos = utility_rtos(zip_path, source)
 
     rows = []
     for county, group in territory.groupby("County"):
         utilities = sorted(set(group["Utility Number"]))
-        known = [codes[u] for u in utilities if u in codes.index]
-        inside = [codes_of == {code} for codes_of in known]
-        touching = [code in codes_of for codes_of in known]
+        known = [rtos[u] for u in utilities if u in rtos.index]
+        inside = [rto in found for found in known]
         if not known:
             status = NO_DATA
         elif all(inside):
-            status = MEMBER
-        elif any(touching):
+            status = rto
+        elif any(inside):
             status = PARTIAL
         else:
             status = OUTSIDE
@@ -154,14 +188,20 @@ def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
                 "county_eia": county,
                 "status": status,
                 "utilities": len(utilities),
-                "utilities_with_sales_row": len(known),
+                "utilities_with_row": len(known),
+                "utilities_in_rto": sum(inside),
             }
         )
     table = pd.DataFrame(rows)
-    serving = set(territory["Utility Number"])
+    serving = territory.drop_duplicates("Utility Number").set_index("Utility Number")["Utility Name"]
+    left_out = serving[~serving.index.isin(rtos.index)]
+    with_row = rtos[rtos.index.isin(serving.index)]
     counts = {
         "utilities_in_territory_sheet": len(serving),
-        "utilities_without_sales_row": len(serving - set(codes.index)),
+        "utilities_without_utility_row": len(left_out),
+        "utilities_reporting_no_rto": int((with_row.map(len) == 0).sum()),
+        "utilities_in_rto": int(with_row.map(lambda found: rto in found).sum()),
+        "left_out_utilities": [f"{number} {name}" for number, name in left_out.sort_index().items()],
     }
     return table, counts
 
