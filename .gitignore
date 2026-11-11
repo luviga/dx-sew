@@ -1,0 +1,7 @@
+configs/local.yaml
+.venv/
+__pycache__/
+data/
+runs/
+*.parquet
+*.zip

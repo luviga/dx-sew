@@ -1,0 +1,10 @@
+# Folder for downloads and derived files, outside the repository.
+data_root: D:/dxsew_build/data
+# SMART-DS root on this machine, the same meaning as in dss-eulp-coupling.
+smart_ds_base: D:/lvg
+# Root of the EULP building metadata.
+eulp_metadata_root: D:/lvg/eulp_metadata
+# A clone of dss-eulp-coupling, pinned by commit.
+coupling_repo: D:/dxsew_build/coupling
+# The Python interpreter that runs the coupling.
+coupling_python: C:/path/to/coupling/python.exe
