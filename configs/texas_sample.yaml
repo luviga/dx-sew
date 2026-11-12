@@ -85,6 +85,13 @@ sample:
   per_stratum: 2
   # Sizes of the size table (substations per stratum); estimates only.
   sizes: [1, 2, 3, 5]
+  # Run time per feeder for the hours of the size table, in minutes.
+  # --minutes-per-feeder of the sample CLI replaces these when given.
+  minutes_per_feeder:
+    - minutes: 17.88
+      label: "measured on one substation at the pin on Machine 3: three feeders, both seasons, three mixes (baseline, mixed, stress)"
+    - minutes: 5.96
+      label: "measured on one substation at the pin on Machine 3: the same run per feeder and per mix, one third of 17.88"
 
 staging:
   # Folder under smart_ds_base (configs/local.yaml) that receives the sample.

@@ -2,7 +2,7 @@
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.sample --minutes-per-feeder <minutes>
+    uv run python -m dxsew.texas.sample [--minutes-per-feeder <minutes>]
 
 Steps: listing of the release (reused when the listing file exists), frame of
 substations, county, balancing area by location (decision K56), county
@@ -320,7 +320,8 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         action="append",
         default=[],
-        help="run time of one feeder in minutes, for the size table; may be repeated",
+        help="run time of one feeder in minutes, for the size table; may be repeated; "
+        "default sample.minutes_per_feeder of the settings",
     )
     parser.add_argument("--refresh-listing", action="store_true", help="list the release again")
     parser.add_argument("--workers", type=int, default=32, help="download threads")
@@ -358,10 +359,13 @@ def main(argv: list[str] | None = None) -> int:
     print(stratum_summary(frame).to_string(index=False))
 
     rule = settings["sample"]
+    minutes = args.minutes_per_feeder or [float(m["minutes"]) for m in rule.get("minutes_per_feeder", [])]
+    for item in rule.get("minutes_per_feeder", []) if not args.minutes_per_feeder else []:
+        print(f"minutes per feeder {item['minutes']:g}: {item['label']}")
     sizes = []
     for per_stratum in rule["sizes"]:
         drawn = draw_sample(frame, per_stratum, rule["seed"])
-        sizes.append(size_row(drawn, references, per_stratum, args.minutes_per_feeder))
+        sizes.append(size_row(drawn, references, per_stratum, minutes))
         if per_stratum == rule["per_stratum"]:
             write_csv(drawn.reindex(columns=SAMPLE_COLUMNS), out / f"sample_{stamp}.csv")
     write_csv(pd.DataFrame(sizes), out / f"sizes_{stamp}.csv")
