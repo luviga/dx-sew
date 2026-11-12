@@ -10,6 +10,7 @@ shows that the run wrote nothing tracked or untracked in the clone.
 Run from the repository::
 
     uv run python -m dxsew.coupling --case <case.yaml> --settings <folder> [--season summer|winter] [--log <file>]
+    uv run python -m dxsew.coupling --check-only
 
 Coupling repository: https://github.com/DeltaE/dss-eulp-coupling (``run_case.py``,
 README sections "Settings from a caller" and "Peak-day rules").
@@ -140,8 +141,8 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one coupling case at the pinned commit.")
-    parser.add_argument("--case", type=Path, required=True, help="case file of the coupling")
-    parser.add_argument("--settings", type=Path, required=True, help="settings folder of the case")
+    parser.add_argument("--case", type=Path, help="case file of the coupling")
+    parser.add_argument("--settings", type=Path, help="settings folder of the case")
     parser.add_argument("--season", choices=SEASONS, action="append", help="season; default both")
     parser.add_argument("--log", type=Path, default=None, help="file that receives the timed output lines")
     parser.add_argument("--check-only", action="store_true", help="check the pin and run nothing")
@@ -150,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_only:
         print(f"pin ok: {check_pin(Path(local['coupling_repo']))}")
         return 0
+    if not args.case or not args.settings:
+        parser.error("--case and --settings are required unless --check-only is given")
     return run_case(args.case, args.settings, args.season or SEASONS, log=args.log)
 
 
