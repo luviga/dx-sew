@@ -74,6 +74,7 @@ class Paths:
         self.release_files = self.oedi / "files"
         self.census = self.data_root / "census"
         self.eia = self.data_root / "eia"
+        self.geo = self.data_root / "geo"
         self.texas = self.data_root / "texas"
         self.coupling_settings = self.texas / "coupling_settings"
         self.staging = self.smart_ds_base / settings["staging"]["folder"]

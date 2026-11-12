@@ -7,7 +7,7 @@ import pytest
 import shapefile
 from shapely.geometry import box
 
-from dxsew.texas import geo
+from dxsew.texas import ba, geo
 from dxsew.texas.sample import geography_columns
 
 # Four square counties of a made-up state 99, side one degree.
@@ -181,12 +181,24 @@ def test_county_and_stratum_of_a_few_substations(eia_zip):
     )
     status, _ = geo.membership(eia_zip, SOURCE)
     zone_of = {"99001": "Hot-Humid", "99003": "Hot-Humid", "99005": "Hot-Dry", "99007": "Hot-Dry"}
-    result = geography_columns(frame, COUNTIES, status, zone_of, ["99003"], "AREA")
+    # Balancing area map: AREA-W over Alpha and the left quarter of Beta, OTHER
+    # over the rest of Beta and De Witt, AREA-E over De Witt and beyond the
+    # state (De Witt is in both), nothing over Delta.
+    areas = [
+        ba.Area("AREA-W", box(0, 0, 1.25, 1)),
+        ba.Area("OTHER", box(1.25, 0, 3, 1)),
+        ba.Area("AREA-E", box(2, 0, 3, 1)),
+        ba.Area("AREA-E", box(7, 0, 9, 1)),
+    ]
+    result = geography_columns(frame, COUNTIES, status, zone_of, ["99003"], areas, "AREA")
     assert result["county"].tolist()[:4] == ["Alpha", "Beta", "Alpha", "De Witt"]
     assert pd.isna(result["county"].iloc[4])
-    assert result["ba_status"].tolist()[:4] == ["AREA", geo.PARTIAL, "AREA", geo.OUTSIDE]
+    assert result["county_status_eia861"].tolist()[:4] == ["AREA", geo.PARTIAL, "AREA", geo.OUTSIDE]
+    assert result["ba_label"].tolist() == ["AREA-W", "OTHER", "AREA-W", ba.OVERLAP, "AREA-E"]
+    # e lies in AREA-E but in no county, so it has no zone and stays out.
     assert result["in_frame"].tolist() == [True, False, True, False, False]
     assert result["stratum"].tolist()[0] == "U|Hot-Humid"
     assert result["stratum"].tolist()[2] == "R|Hot-Humid"
     assert result["stratum"].isna().tolist() == [False, True, False, True, True]
     assert result["zone_from_nearest_county"].tolist() == [False, True, False, False, False]
+    assert "in_ba" not in result

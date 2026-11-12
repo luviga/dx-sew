@@ -29,10 +29,11 @@ geography:
     # https://data.catalyst.coop/preview/pudl/core_eia861__yearly_utility_data_rto
     url: "https://www.eia.gov/electricity/data/eia861/archive/zip/f8612018.zip"
     state: "TX"
-    # ISO or RTO of the frame (decision K52): a county is in the frame when
-    # every utility serving it reports operating in this RTO. The name is a
-    # column of the RTO group of the utility data file (CAISO, ERCOT, PJM,
-    # NYISO, SPP, MISO, ISONE).
+    # ISO or RTO of the county status (decision K52, kept as the column
+    # county_status_eia861 for checking; the frame follows the map below):
+    # a county has this status when every utility serving it reports
+    # operating in this RTO. The name is a column of the RTO group of the
+    # utility data file (CAISO, ERCOT, PJM, NYISO, SPP, MISO, ISONE).
     rto: "ERCOT"
     territory_file: "Service_Territory_2018.xlsx"
     territory_sheet: "Counties_States"
@@ -42,6 +43,30 @@ geography:
     # the row above it holds the column groups.
     utility_header_row: 1
     rto_group: "Operating in these RTOs"
+  balancing_area_map:
+    # Frame rule (decision K56): a substation is in the frame when the
+    # centroid of its load buses lies inside one polygon of this map whose
+    # name (field BA) starts with ba_prefix. The county status from EIA-861
+    # above is kept as the column county_status_eia861, for checking only.
+    # Map: balancing area shapes shipped by PyPSA-USA and used there as its
+    # onshore shapes (workflow/rules/build_electricity.smk), NAD83 geographic.
+    # https://github.com/PyPSA/pypsa-usa/tree/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new
+    # License: MIT, https://github.com/PyPSA/pypsa-usa/blob/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/LICENSE.md
+    # Citation (CITATION.cff of the repository): K. Tehranchi, T. Barnes,
+    # M. Frysztacki, I. M. L. Azevedo, "Costs and benefits of transmission
+    # investments in the United States under different policy scenarios",
+    # Environmental Research Letters 21 (2026) 194039,
+    # https://doi.org/10.1088/1748-9326/aea586 ; software "PyPSA-USA: An
+    # Open-Source Energy System Optimization Model for the United States",
+    # https://doi.org/10.5281/zenodo.10815964
+    ba_shapes: "https://raw.githubusercontent.com/PyPSA/pypsa-usa/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new/Modified_BE_BA_Shapes.shp"
+    # Files of the shapefile downloaded beside it, under <data_root>/geo/<folder>.
+    companions: [".shx", ".dbf", ".prj"]
+    folder: "pypsa_usa_ba"
+    # Start of the polygon names of the balancing area of the frame; the
+    # ERCOT polygons are ERCO-C, ERCO-E, ERCO-FW, ERCO-N, ERCO-NC, ERCO-S,
+    # ERCO-SC and ERCO-W.
+    ba_prefix: "ERCO"
   climate_zone:
     # ResStock 2024 release 2 baseline metadata of Texas, placed by the user
     # under eulp_metadata_root (configs/local.yaml).
