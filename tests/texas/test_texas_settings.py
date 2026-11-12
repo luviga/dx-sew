@@ -1,6 +1,9 @@
 """Coupling settings and the staging helpers, on small hand-made inputs."""
 
+from pathlib import Path
+
 import pandas as pd
+import pytest
 import yaml
 
 from dxsew.texas import settings as coupling_settings
@@ -54,19 +57,55 @@ def test_case_file_runs_every_feeder_of_the_substation():
     }
 
 
-def test_settings_are_written_for_staged_substations_only(tmp_path):
+def test_settings_folder_for_staged_substations_only(tmp_path):
     sample = pd.DataFrame([UNIT, {**UNIT, "substation": "p9uhs2_1247", "feeders": 1}])
     staging = pd.DataFrame(
         {"subregion": ["P9U", "P9U"], "substation": ["p9uhs1_1247", "p9uhs2_1247"], "staged": [True, False]}
     )
     units = coupling_settings.staged_units(sample, staging)
-    written = coupling_settings.write_settings(units, SETTINGS, tmp_path)
-    registry = yaml.safe_load(written[0].read_text(encoding="utf-8"))
+    local = coupling_settings.local_settings(
+        {"smart_ds_base": "X:/base", "runs_root": "runs"}, {"evwatts_extract_dir": "X:/ev"}, tmp_path / "runs"
+    )
+    days = coupling_settings.given_days(
+        pd.DataFrame({"Season": ["summer", "winter"], "Month": [7, 1], "Day": [15, 15]}), ["f2", "f1"]
+    )
+    folder = tmp_path / "settings"
+    written = coupling_settings.write_settings_folder(units, SETTINGS, folder, local, days)
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "given_days.csv", "local.yaml", "pipeline_config.yaml", "topology_registry.yaml"
+    ]
+    registry = yaml.safe_load((folder / "topology_registry.yaml").read_text(encoding="utf-8"))
     assert list(registry["topologies"]) == ["ZZ_P9U_p9uhs1_1247"]
     assert set(registry["topologies"]["ZZ_P9U_p9uhs1_1247"]) == COUPLING_KEYS
-    assert [path.name for path in written[1:]] == ["ZZ_P9U_p9uhs1_1247__ZZ.yaml"]
-    case = yaml.safe_load(written[1].read_text(encoding="utf-8"))
-    assert case["topology_id"] in registry["topologies"]
+    assert yaml.safe_load((folder / "pipeline_config.yaml").read_text(encoding="utf-8")) == {"peak_day_rule": "given"}
+    loaded = yaml.safe_load((folder / "local.yaml").read_text(encoding="utf-8"))
+    assert loaded == {"smart_ds_base": "X:/base", "runs_root": (tmp_path / "runs").as_posix(), "evwatts_extract_dir": "X:/ev"}
+    assert (folder / "given_days.csv").read_text(encoding="utf-8").splitlines() == [
+        "Feeder,Season,Month,Day", "f1,summer,7,15", "f2,summer,7,15", "f1,winter,1,15", "f2,winter,1,15",
+    ]
+    cases = coupling_settings.write_cases(units, SETTINGS, tmp_path / "cases")
+    assert [path.name for path in cases] == ["ZZ_P9U_p9uhs1_1247__ZZ.yaml"]
+    case = yaml.safe_load(cases[0].read_text(encoding="utf-8"))
+    assert case["topology_id"] in registry["topologies"] and case["execution"] == {"max_feeders": 3}
+    assert written[0] == folder / "local.yaml"
+
+
+def test_runs_root_must_be_absolute_and_days_unique():
+    with pytest.raises(ValueError):
+        coupling_settings.local_settings({}, {}, Path("runs"))
+    with pytest.raises(ValueError):
+        coupling_settings.given_days(
+            pd.DataFrame({"Feeder": ["f1", "f1"], "Season": ["summer", "summer"], "Month": [7, 7], "Day": [1, 2]}), []
+        )
+
+
+def test_feeders_are_folders_with_loads_and_loadshapes(tmp_path):
+    for name, files in (("s--f1", ("Loads.dss", "LoadShapes.dss")), ("s--f2", ("Loads.dss",)), ("s--f0", ("LoadShapes.dss", "Loads.dss"))):
+        (tmp_path / name).mkdir()
+        for file in files:
+            (tmp_path / name / file).write_text("", encoding="utf-8")
+    (tmp_path / "Master.dss").write_text("", encoding="utf-8")
+    assert coupling_settings.feeders_of(tmp_path) == ["s--f0", "s--f1"]
 
 
 def test_staged_references_read_every_feeder(tmp_path):
