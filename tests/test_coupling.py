@@ -102,3 +102,12 @@ def test_run_case_output_is_unbuffered(repo, tmp_path, capsys):
     (tmp_path / "case.yaml").write_text("case_id: x\n", encoding="utf-8")
     assert coupling.run_case(tmp_path / "case.yaml", tmp_path, repo=repo, python=sys.executable, pin=pin_of(repo)) == 0
     assert "unbuffered 1" in capsys.readouterr().out
+
+
+def test_echo_survives_a_console_without_the_character():
+    import io
+
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+    coupling.echo("ok ✓ done\n", stream)
+    assert raw.getvalue() == b"ok ? done\n"

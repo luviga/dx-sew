@@ -108,6 +108,17 @@ def command(case: Path, settings: Path, python: Path, seasons=SEASONS) -> list[s
     return cmd
 
 
+def echo(line: str, stream=None) -> None:
+    """Print one output line; a character the console encoding lacks is replaced, never fatal."""
+    stream = stream or sys.stdout
+    try:
+        stream.write(line)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or "ascii"
+        stream.write(line.encode(encoding, errors="replace").decode(encoding))
+    stream.flush()
+
+
 def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = None,
              python: Path | None = None, log: Path | None = None, pin: dict | None = None) -> int:
     """Check the pin, run the case with the coupling's ``run_case.py``, check the pin again.
@@ -131,7 +142,7 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
         process = subprocess.Popen(cmd, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
         for line in process.stdout:
-            sys.stdout.write(line)
+            echo(line)
             if handle:
                 handle.write(f"{datetime.now(timezone.utc).isoformat(timespec='milliseconds')} {line}")
                 handle.flush()
