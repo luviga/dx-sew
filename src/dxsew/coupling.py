@@ -19,6 +19,7 @@ README sections "Settings from a caller" and "Peak-day rules").
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -124,8 +125,11 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
     cmd = command(case, settings, python, seasons)
     handle = Path(log).open("a", encoding="utf-8") if log else None
     try:
+        # Unbuffered output lets every line reach the log when it is printed, so the
+        # time written beside it is the time of the event; it changes no result.
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         process = subprocess.Popen(cmd, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, encoding="utf-8", errors="replace", bufsize=1)
+                                   text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
         for line in process.stdout:
             sys.stdout.write(line)
             if handle:

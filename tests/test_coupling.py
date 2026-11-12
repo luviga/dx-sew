@@ -94,3 +94,11 @@ def test_pin_file_names_repository_and_commit(tmp_path):
     path.write_text("repository: https://example.org/c\n", encoding="utf-8")
     with pytest.raises(coupling.PinError):
         coupling.read_pin(path)
+
+
+def test_run_case_output_is_unbuffered(repo, tmp_path, capsys):
+    (repo / "run_case.py").write_text("import os\nprint('unbuffered', os.environ.get('PYTHONUNBUFFERED'))\n", encoding="utf-8")
+    git(repo, "commit", "-q", "-am", "env")
+    (tmp_path / "case.yaml").write_text("case_id: x\n", encoding="utf-8")
+    assert coupling.run_case(tmp_path / "case.yaml", tmp_path, repo=repo, python=sys.executable, pin=pin_of(repo)) == 0
+    assert "unbuffered 1" in capsys.readouterr().out
