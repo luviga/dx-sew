@@ -7,7 +7,7 @@ dx-sew builds the synthetic balancing area of Paper 1 by sewing together three p
 - `src/dxsew/`: the Python package.
 - `configs/`: configuration. Copy `configs/local.yaml.example` to `configs/local.yaml` and set the paths for your machine; `configs/local.yaml` is not tracked.
 - `tests/`: tests, run with pytest. No test touches the network.
-- `docs/`: method notes.
+- `docs/`: method notes. The frame procedure for any balancing area, with the EIA-861 veto and its lookups, is in [docs/frame_procedure.md](docs/frame_procedure.md).
 
 Downloads and derived files go to the `data_root` folder named in `configs/local.yaml`, outside the repository. Nothing derived is committed.
 
