@@ -6,9 +6,9 @@ Run from the repository::
 
 Steps: listing of the release (reused when the listing file exists), frame of
 substations, county, balancing area by location (decision K56), county
-status from EIA-861 (decision K52, kept for checking) and climate zone of each
-substation, strata, the sample at the size of ``sample.per_stratum`` and the
-size table for every size in ``sample.sizes``. All outputs go to the data
+status from EIA-861 (decision K52, kept for checking), the EIA-861 veto of
+the county (decision K57) and climate zone of each substation, strata, the
+sample at the size of ``sample.per_stratum`` and the size table for every size in ``sample.sizes``. All outputs go to the data
 folder; nothing is written into the repository.
 """
 
@@ -120,6 +120,7 @@ def geography_columns(
     zone_filled: list[str],
     areas: list[ba.Area],
     prefix: str,
+    veto: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Frame with county, balancing area, county status, zone, frame membership and stratum.
 
@@ -130,6 +131,13 @@ def geography_columns(
     ``ba.assign``) and its county has a zone; its stratum is its kind and the
     zone of its county. The county status from EIA-861 (decision K52) is kept
     as ``county_status_eia861`` for checking and plays no part in the frame.
+
+    ``veto`` is the county table of ``geo.county_veto`` (decision K57), or
+    ``None`` when the veto is off. When given, ``county_veto_eia861`` is true
+    for a substation whose county is vetoed, false for one whose county is
+    not (or is not in the table), and empty for one with no county; a vetoed
+    substation leaves the frame. The veto only removes: a substation outside
+    the map rule stays outside.
     """
     frame = frame.copy()
     found = geo.assign_counties(frame["centroid_x"], frame["centroid_y"], counties)
@@ -144,15 +152,46 @@ def geography_columns(
     frame["zone_from_nearest_county"] = frame["county_geoid"].isin(zone_filled)
     frame = ba.assign(frame, areas, prefix)
     frame["in_frame"] = frame["in_ba"] & frame["zone"].notna()
+    if veto is not None:
+        vetoed = set(veto.loc[veto["vetoed"].astype(bool), "county_key"].map(keys).dropna())
+        frame.insert(
+            frame.columns.get_loc("county_status_eia861") + 1,
+            "county_veto_eia861",
+            [geoid in vetoed if has else None for geoid, has in zip(frame["county_geoid"], has_county)],
+        )
+        frame["in_frame"] = frame["in_frame"] & ~frame["county_veto_eia861"].eq(True)
     frame["stratum"] = (frame["kind"] + "|" + frame["zone"]).where(frame["in_frame"])
     return frame.drop(columns="in_ba")
 
 
-def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd.DataFrame, dict]:
-    """Add county, RTO status, climate zone and stratum to the frame.
+def veto_for(
+    balancing: dict, eia_zip: Path, counties: list[geo.County], status: pd.DataFrame
+) -> pd.DataFrame | None:
+    """County veto table of ``geo.county_veto`` when ``balancing["veto"]`` is on, else ``None``.
+
+    Adds the Census county name and code (empty for an EIA-861 county with
+    no Census match) and the county status of ``geo.membership``.
+    """
+    if not balancing.get("veto", False):
+        return None
+    veto = geo.county_veto(eia_zip, balancing)
+    census = {geo.name_key(county.name): county for county in counties}
+    veto.insert(2, "county", veto["county_key"].map(lambda key: census[key].name if key in census else None))
+    veto.insert(3, "county_geoid", veto["county_key"].map(lambda key: census[key].geoid if key in census else None))
+    veto.insert(4, "county_status_eia861", veto["county_key"].map(dict(zip(status["county_key"], status["status"]))))
+    return veto
+
+
+def add_geography(
+    frame: pd.DataFrame, settings: dict, paths: Paths
+) -> tuple[pd.DataFrame, dict, pd.DataFrame | None]:
+    """Add county, RTO status, veto, climate zone and stratum to the frame.
 
     When the centroids do not read as longitudes and latitudes inside the
     state, no geography is assigned and the strata are the kinds alone.
+    Returns the frame, notes, and the county veto table with the county
+    status from EIA-861 and the Census county (``None`` when
+    ``geography.balancing_area.veto`` is off or no geography is assigned).
     """
     geography = settings["geography"]
     counties = geo.read_counties(
@@ -169,7 +208,7 @@ def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd
         frame = frame.copy()
         frame["in_frame"] = located
         frame["stratum"] = frame["kind"].where(located)
-        return frame, notes
+        return frame, notes, None
 
     balancing = geography["balancing_area"]
     status, counts = geo.membership(fetch_source(balancing["url"], paths.eia), balancing)
@@ -183,6 +222,11 @@ def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd
     )
     notes["counties_by_status"] = status["status"].value_counts().to_dict()
 
+    veto = veto_for(balancing, fetch_source(balancing["url"], paths.eia), counties, status)
+    if veto is not None:
+        notes["counties_vetoed"] = sorted(veto.loc[veto["vetoed"], "county_eia"])
+        notes["counties_by_veto_reason"] = veto["reason"].value_counts().sort_index().to_dict()
+
     climate = geography["climate_zone"]
     zones, several = geo.climate_zones(paths.eulp_metadata_root / climate["metadata_file"], climate)
     zone_of, filled = geo.county_zones(counties, zones)
@@ -192,12 +236,63 @@ def add_geography(frame: pd.DataFrame, settings: dict, paths: Paths) -> tuple[pd
     source = geography["balancing_area_map"]
     areas = ba.read_areas(ba.fetch_map(source, paths.geo, oedi.fetch))
     notes["map_records"] = len(areas)
-    frame = geography_columns(frame, counties, status, zone_of, filled, areas, source["ba_prefix"])
+    frame = geography_columns(frame, counties, status, zone_of, filled, areas, source["ba_prefix"], veto)
     notes["substations_outside_every_county"] = int(located.sum() - frame["county"].notna().sum())
     notes["substations_in_prefix_without_zone"] = int(
         (frame["ba_label"].map(lambda v: ba.in_prefix(v, source["ba_prefix"])) & frame["zone"].isna()).sum()
     )
-    return frame, notes
+    return frame, notes, veto
+
+
+VETO_REMOVED_COLUMNS = [
+    "subregion",
+    "substation",
+    "county",
+    "county_geoid",
+    "ba_label",
+    "stratum",
+    "feeders",
+    "loads",
+]
+
+
+def veto_removed(frame: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """Substations the EIA-861 veto removes from the frame.
+
+    These are the substations the map rule and a climate zone would place in
+    the frame and whose county is vetoed. ``stratum`` is the stratum they
+    would have had: their kind and the zone of their county.
+    """
+    if "county_veto_eia861" not in frame:
+        return pd.DataFrame(columns=VETO_REMOVED_COLUMNS)
+    by_map = frame["ba_label"].map(lambda value: ba.in_prefix(value, prefix)) & frame["zone"].notna()
+    removed = frame[by_map & frame["county_veto_eia861"].eq(True)]
+    removed = removed.assign(stratum=removed["kind"] + "|" + removed["zone"])
+    return (
+        removed.sort_values(["county", "subregion", "substation"], kind="mergesort")
+        .reindex(columns=VETO_REMOVED_COLUMNS)
+        .reset_index(drop=True)
+    )
+
+
+def veto_counties(frame: pd.DataFrame, veto: pd.DataFrame, prefix: str) -> pd.DataFrame:
+    """The county veto table with the substations, feeders and loads of each county.
+
+    ``*_in_ba`` count the substations whose load-bus centroid lies in a map
+    polygon whose name starts with ``prefix``, by county of the centroid;
+    ``frame_substations_removed`` counts those the veto removes from the frame
+    (``veto_removed``).
+    """
+    inside = frame[frame["ba_label"].map(lambda value: ba.in_prefix(value, prefix))]
+    counts = inside.groupby("county_geoid").agg(
+        substations_in_ba=("substation", "size"), feeders_in_ba=("feeders", "sum"), loads_in_ba=("loads", "sum")
+    )
+    removed = veto_removed(frame, prefix).groupby("county_geoid").size().rename("frame_substations_removed")
+    table = veto.merge(counts, left_on="county_geoid", right_index=True, how="left")
+    table = table.merge(removed, left_on="county_geoid", right_index=True, how="left")
+    number_columns = ["substations_in_ba", "feeders_in_ba", "loads_in_ba", "frame_substations_removed"]
+    table[number_columns] = table[number_columns].fillna(0).astype(int)
+    return table.sort_values("county_eia", kind="mergesort").reset_index(drop=True)
 
 
 def systematic_positions(size: int, target: int, start: float) -> list[int]:
@@ -341,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     print(by_subregion.groupby("kind").agg(subregions=("subregion", "size"), substations=("substations", "sum")))
 
     frame, references = frame_module.build_frame(listing, settings, paths, args.workers, args.processes)
-    frame, notes = add_geography(frame, settings, paths)
+    frame, notes, veto = add_geography(frame, settings, paths)
     write_parquet(frame, out / f"frame_{stamp}.parquet")
     write_parquet(references, out / f"references_{stamp}.parquet")
     for name, value in notes.items():
@@ -356,6 +451,16 @@ def main(argv: list[str] | None = None) -> int:
         outside = ba.outside_list(frame, areas)
         write_csv(outside, out / f"ba_none_overlap_{stamp}.csv")
         print(outside.to_string(index=False))
+    if veto is not None:
+        prefix = settings["geography"]["balancing_area_map"]["ba_prefix"]
+        table = veto_counties(frame, veto, prefix)
+        write_csv(table, out / f"veto_counties_{stamp}.csv")
+        removed = veto_removed(frame, prefix)
+        write_csv(removed, out / f"veto_frame_removed_{stamp}.csv")
+        print("counties vetoed (EIA-861, decision K57), for review:")
+        shown = ["county_eia", "county_status_eia861", "substations_in_ba", "frame_substations_removed", "utility_marks"]
+        print(table.loc[table["vetoed"], shown].to_string(index=False))
+        print(f"frame substations removed by the veto: {len(removed)}")
     print(stratum_summary(frame).to_string(index=False))
 
     rule = settings["sample"]

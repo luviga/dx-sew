@@ -35,6 +35,18 @@ geography:
     # operating in this RTO. The name is a column of the RTO group of the
     # utility data file (CAISO, ERCOT, PJM, NYISO, SPP, MISO, ISONE).
     rto: "ERCOT"
+    # Veto of the frame (decision K57), a second step after the map below:
+    # a substation leaves the frame when the utilities of its county report,
+    # on the utility data file, that their customers belong to another RTO.
+    # A county is vetoed when every utility serving it has a utility data
+    # row in the state, every one marks at least one RTO, none marks rto,
+    # and every one marks at least one RTO that is neither rto nor in
+    # veto_ignore_marks. The veto only removes, never adds; a blank answer,
+    # a missing row, a mark in veto_ignore_marks alone, and a county where
+    # some utilities mark rto never remove. With veto: false the frame
+    # follows the map and a climate zone alone.
+    veto: true
+    veto_ignore_marks: ["Other"]
     territory_file: "Service_Territory_2018.xlsx"
     territory_sheet: "Counties_States"
     utility_file: "Utility_Data_2018.xlsx"
