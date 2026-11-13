@@ -17,10 +17,7 @@ Sources (the URLs are settings in ``configs/texas_sample.yaml``):
 
 from __future__ import annotations
 
-import io
 import math
-import re
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +26,24 @@ import shapefile
 from shapely import STRtree
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
+
+# The EIA-861 readers and the veto (decisions K57 and K58) live in dxsew.veto,
+# the procedure for any balancing area; they are imported here so every
+# existing caller of dxsew.texas.geo works as before.
+from dxsew.veto import (  # noqa: F401
+    IGNORED_MARK_ONLY,
+    MISSING_ROW,
+    NO_RTO_MARKED,
+    REPORTS_RTO,
+    VETOED,
+    _sheet,
+    county_veto,
+    name_key,
+    territory_rows,
+    utility_rtos,
+    veto_reason,
+    veto_table,
+)
 
 PARTIAL, OUTSIDE, NO_DATA = "partial", "outside", "no_utility_row"
 # The member status of a county is the RTO name of the settings (``rto``).
@@ -108,57 +123,6 @@ def gisjoin(geoid: str) -> str:
     return f"G{geoid[:2]}0{geoid[2:]}0"
 
 
-def name_key(name: str) -> str:
-    """County name reduced to its letters, lower case, for joining two sources."""
-    return re.sub(r"[^a-z]", "", name.lower())
-
-
-def _sheet(zip_path: Path, member: str, sheet: str, header) -> pd.DataFrame:
-    with zipfile.ZipFile(zip_path) as archive:
-        return pd.read_excel(io.BytesIO(archive.read(member)), sheet_name=sheet, header=header)
-
-
-def utility_rtos(zip_path: Path, source: dict) -> pd.Series:
-    """ISOs and RTOs each utility of the state reports operating in, from EIA-861.
-
-    The utility data sheet has two header rows: a group row whose group
-    ``source["rto_group"]`` ("Operating in these RTOs") spans one column per
-    ISO or RTO, and a row of column names below it. A utility operates in an
-    RTO when its cell holds ``Y``; ``N`` and a blank cell both mean it does not
-    report operating there. Rows are kept by state; a utility with several rows
-    in the state operates in every RTO any of its rows reports.
-
-    Returns ``utility number -> frozenset of RTO names``, one entry per utility
-    with a row in the state.
-    """
-    raw = _sheet(zip_path, source["utility_file"], source["utility_sheet"], None)
-    header = source["utility_header_row"]
-    group = raw.iloc[header - 1].ffill().astype(str).str.strip()
-    names = raw.iloc[header].astype(str).str.strip()
-    number_at = names[names == "Utility Number"].index[0]
-    state_at = names[names == "State"].index[0]
-    rto_at = [i for i in raw.columns if group[i] == source["rto_group"]]
-    if not rto_at:
-        raise ValueError(f"No column group {source['rto_group']!r} in {source['utility_file']}.")
-    body = raw.iloc[header + 1 :]
-    body = body[body[state_at] == source["state"]]
-    rtos: dict[int, set[str]] = {}
-    for _, row in body.iterrows():
-        found = {names[i] for i in rto_at if str(row[i]).strip().upper() == "Y"}
-        rtos.setdefault(int(row[number_at]), set()).update(found)
-    return pd.Series({number: frozenset(found) for number, found in rtos.items()}, dtype=object)
-
-
-def territory_rows(zip_path: Path, source: dict) -> pd.DataFrame:
-    """Rows of the service territory sheet of EIA-861 for the state of the settings.
-
-    One row per utility and county (columns ``Utility Number``, ``Utility
-    Name``, ``State``, ``County`` among others).
-    """
-    territory = _sheet(zip_path, source["territory_file"], source["territory_sheet"], 0)
-    return territory[territory["State"] == source["state"]]
-
-
 def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
     """RTO status of every county of the state, from EIA-861 (decision K52).
 
@@ -213,101 +177,6 @@ def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
         "left_out_utilities": [f"{number} {name}" for number, name in left_out.sort_index().items()],
     }
     return table, counts
-
-
-# Reasons of the veto table (decision K57), one per county.
-VETOED = "other_rto_only"
-REPORTS_RTO, MISSING_ROW, NO_RTO_MARKED, IGNORED_MARK_ONLY = (
-    "reports_rto",
-    "missing_row",
-    "no_rto_marked",
-    "ignored_mark_only",
-)
-
-
-def veto_reason(marks: list[frozenset | None], rto: str, ignore) -> str:
-    """Veto reason of one county from the RTO marks of the utilities serving it.
-
-    ``marks`` holds one entry per utility: its RTO marks, or ``None`` when it
-    has no utility data row in the state. The county is vetoed
-    (``other_rto_only``) when every utility has a row, every one marks at
-    least one RTO, none marks ``rto``, and every one marks at least one RTO
-    that is neither ``rto`` nor in ``ignore``. Otherwise the first reason that
-    applies: ``reports_rto``, ``missing_row``, ``no_rto_marked``,
-    ``ignored_mark_only``.
-    """
-    ignore = set(ignore)
-    known = [found for found in marks if found is not None]
-    if any(rto in found for found in known):
-        return REPORTS_RTO
-    if len(known) < len(marks) or not marks:
-        return MISSING_ROW
-    if any(not found for found in known):
-        return NO_RTO_MARKED
-    if any(not (found - ignore - {rto}) for found in known):
-        return IGNORED_MARK_ONLY
-    return VETOED
-
-
-def veto_table(territory: pd.DataFrame, rtos: pd.Series, rto: str, ignore) -> pd.DataFrame:
-    """Veto of every county of the territory rows (decision K57).
-
-    ``territory`` holds the service territory rows of the state
-    (``territory_rows``) and ``rtos`` the RTO marks of each utility
-    (``utility_rtos``). Returns one row per county: ``county_key``,
-    ``county_eia``, ``vetoed``, ``reason`` (``veto_reason``), ``utilities``
-    (count), ``utilities_with_row`` and ``utility_marks``, the utilities as
-    ``number name [marks]`` joined by ``; `` with ``no utility data row`` or
-    ``no RTO marked`` where that applies.
-    """
-    names = territory.drop_duplicates("Utility Number").set_index("Utility Number")["Utility Name"]
-    rows = []
-    for county, group in territory.groupby("County"):
-        utilities = sorted(set(group["Utility Number"]))
-        marks = [rtos[u] if u in rtos.index else None for u in utilities]
-        reason = veto_reason(marks, rto, ignore)
-        described = []
-        for number, found in zip(utilities, marks):
-            if found is None:
-                text = "no utility data row"
-            elif not found:
-                text = "no RTO marked"
-            else:
-                text = ", ".join(sorted(found))
-            described.append(f"{number} {names[number]} [{text}]")
-        rows.append(
-            {
-                "county_key": name_key(county),
-                "county_eia": county,
-                "vetoed": reason == VETOED,
-                "reason": reason,
-                "utilities": len(utilities),
-                "utilities_with_row": sum(found is not None for found in marks),
-                "utility_marks": "; ".join(described),
-            }
-        )
-    columns = ["county_key", "county_eia", "vetoed", "reason", "utilities", "utilities_with_row", "utility_marks"]
-    return pd.DataFrame(rows, columns=columns)
-
-
-def county_veto(zip_path: Path, source: dict) -> pd.DataFrame:
-    """EIA-861 veto of every county of the state's service territory sheet (decision K57).
-
-    A county is vetoed when the utilities serving it report, on the utility
-    data file, that their customers belong to another RTO: every utility has
-    a utility data row in the state, every one marks at least one RTO, none
-    marks ``source["rto"]``, and every one marks at least one RTO outside
-    ``source["veto_ignore_marks"]`` (for example ``Other``). The veto only
-    removes substations from the frame; a blank answer, a missing row, a
-    mark in ``veto_ignore_marks`` alone, or a county where some utilities mark
-    ``rto`` never removes. See ``veto_table`` for the columns.
-    """
-    return veto_table(
-        territory_rows(zip_path, source),
-        utility_rtos(zip_path, source),
-        source["rto"],
-        source.get("veto_ignore_marks", []),
-    )
 
 
 def climate_zones(metadata_csv: Path, source: dict) -> tuple[dict[str, str], int]:

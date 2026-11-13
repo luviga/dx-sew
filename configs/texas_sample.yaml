@@ -47,6 +47,24 @@ geography:
     # follows the map and a climate zone alone.
     veto: true
     veto_ignore_marks: ["Other"]
+    # Two lookups of the veto (decision K58), inside the same EIA-861 files,
+    # for a utility with no answer in the state; every K57 rule above stays.
+    # 1. A utility with no utility data row in the state takes the marks of
+    #    its rows in other states.
+    # 2. A utility that still has no mark takes the balancing authority
+    #    codes of its own sales rows (Sales_Ult_Cust and Short_Form files of
+    #    the same zip), in the state first and in any state if it has none
+    #    there. The code ba_code counts as rto; any other code counts as
+    #    another area, whether or not that area is an RTO.
+    # A utility the lookups do not resolve stays unknown, and unknown never
+    # removes. With veto_lookups: false the veto is K57 exactly. The same
+    # procedure for any balancing area: docs/frame_procedure.md and
+    # configs/veto_areas.yaml.
+    veto_lookups: true
+    # Balancing authority code of the area in the column BA Code of the
+    # sales rows; the zip lists the codes in Balancing_Authority_2018.xlsx.
+    # Required when veto_lookups is on.
+    ba_code: "ERCO"
     territory_file: "Service_Territory_2018.xlsx"
     territory_sheet: "Counties_States"
     utility_file: "Utility_Data_2018.xlsx"

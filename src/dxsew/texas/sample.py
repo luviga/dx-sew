@@ -7,7 +7,7 @@ Run from the repository::
 Steps: listing of the release (reused when the listing file exists), frame of
 substations, county, balancing area by location (decision K56), county
 status from EIA-861 (decision K52, kept for checking), the EIA-861 veto of
-the county (decision K57) and climate zone of each substation, strata, the
+the county with its two lookups (decisions K57 and K58) and climate zone of each substation, strata, the
 sample at the size of ``sample.per_stratum`` and the size table for every size in ``sample.sizes``. All outputs go to the data
 folder; nothing is written into the repository.
 """
@@ -25,11 +25,16 @@ import numpy as np
 import pandas as pd
 import requests
 
+from dxsew import veto as frame_veto
+
 from . import frame as frame_module
 from . import ba, geo, oedi
 from .config import Paths, load_local, load_sample_settings
 
 BYTES_PER_GB = 1e9  # decimal gigabyte, the unit of every GB column
+# Year of the EIA-861 files named in geography.balancing_area (f8612018.zip);
+# the veto lookups read the sales and short form files of this year.
+SALES_YEAR = 2018
 ORDER_COLUMNS = ["loads", "subregion", "substation"]
 SAMPLE_COLUMNS = [
     "stratum",
@@ -132,7 +137,7 @@ def geography_columns(
     zone of its county. The county status from EIA-861 (decision K52) is kept
     as ``county_status_eia861`` for checking and plays no part in the frame.
 
-    ``veto`` is the county table of ``geo.county_veto`` (decision K57), or
+    ``veto`` is the county table of ``dxsew.veto.county_veto`` (decisions K57, K58), or
     ``None`` when the veto is off. When given, ``county_veto_eia861`` is true
     for a substation whose county is vetoed, false for one whose county is
     not (or is not in the table), and empty for one with no county; a vetoed
@@ -165,21 +170,38 @@ def geography_columns(
 
 
 def veto_for(
-    balancing: dict, eia_zip: Path, counties: list[geo.County], status: pd.DataFrame
+    balancing: dict,
+    eia_zip: Path,
+    counties: list[geo.County],
+    status: pd.DataFrame,
+    sales_year: int = SALES_YEAR,
 ) -> pd.DataFrame | None:
-    """County veto table of ``geo.county_veto`` when ``balancing["veto"]`` is on, else ``None``.
+    """County veto table of ``dxsew.veto.county_veto`` when ``balancing["veto"]`` is on, else ``None``.
 
-    Adds the Census county name and code (empty for an EIA-861 county with
-    no Census match) and the county status of ``geo.membership``.
+    ``balancing`` carries ``rto``, ``veto_ignore_marks``, ``veto_lookups``
+    (default false) and ``ba_code`` (required with the lookups on);
+    ``sales_year`` is the year of the sales file the lookups read. Adds the
+    Census county name and code (empty for an EIA-861 county with no Census
+    match) and the county status of ``geo.membership``.
     """
     if not balancing.get("veto", False):
         return None
-    veto = geo.county_veto(eia_zip, balancing)
+    veto = frame_veto.county_veto(eia_zip, balancing, sales_year)
     census = {geo.name_key(county.name): county for county in counties}
     veto.insert(2, "county", veto["county_key"].map(lambda key: census[key].name if key in census else None))
     veto.insert(3, "county_geoid", veto["county_key"].map(lambda key: census[key].geoid if key in census else None))
     veto.insert(4, "county_status_eia861", veto["county_key"].map(dict(zip(status["county_key"], status["status"]))))
     return veto
+
+
+def veto_lookups_for(balancing: dict, eia_zip: Path, sales_year: int = SALES_YEAR) -> pd.DataFrame | None:
+    """Every utility of the state a veto lookup touched (``dxsew.veto.lookup_table``).
+
+    ``None`` when the veto is off; an empty table when ``veto_lookups`` is off.
+    """
+    if not balancing.get("veto", False):
+        return None
+    return frame_veto.lookup_table(eia_zip, balancing, sales_year)
 
 
 def add_geography(
@@ -226,6 +248,8 @@ def add_geography(
     if veto is not None:
         notes["counties_vetoed"] = sorted(veto.loc[veto["vetoed"], "county_eia"])
         notes["counties_by_veto_reason"] = veto["reason"].value_counts().sort_index().to_dict()
+        notes["veto_lookups"] = bool(balancing.get("veto_lookups", False))
+        notes["counties_vetoed_k57"] = sorted(veto.loc[veto["vetoed_k57"], "county_eia"])
 
     climate = geography["climate_zone"]
     zones, several = geo.climate_zones(paths.eulp_metadata_root / climate["metadata_file"], climate)
@@ -455,6 +479,12 @@ def main(argv: list[str] | None = None) -> int:
         prefix = settings["geography"]["balancing_area_map"]["ba_prefix"]
         table = veto_counties(frame, veto, prefix)
         write_csv(table, out / f"veto_counties_{stamp}.csv")
+        balancing = settings["geography"]["balancing_area"]
+        looked_up = veto_lookups_for(balancing, fetch_source(balancing["url"], paths.eia))
+        write_csv(looked_up, out / f"veto_lookups_{stamp}.csv")
+        print(f"utilities touched by the veto lookups (decision K58): {len(looked_up)}")
+        if len(looked_up):
+            print(looked_up["lookup"].value_counts().sort_index().to_string())
         removed = veto_removed(frame, prefix)
         write_csv(removed, out / f"veto_frame_removed_{stamp}.csv")
         print("counties vetoed (EIA-861, decision K57), for review:")

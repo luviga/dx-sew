@@ -1,0 +1,43 @@
+# Settings of the frame procedure for any balancing area (decisions K56,
+# K57 and K58): three names per area, plus its states and ignored marks.
+# Method: docs/frame_procedure.md.
+#
+# Fields of an area:
+# - name: name of the area in output file names.
+# - states: postal codes of the states whose counties the report reads.
+# - rto: column of the group "Operating in these RTOs" of the EIA-861
+#   utility data file (Utility_Data_<year>.xlsx, sheet States).
+# - ba_code: balancing authority code of the area in the column BA Code of
+#   the EIA-861 sales rows (Sales_Ult_Cust_<year>.xlsx and
+#   Short_Form_<year>.xlsx); the zip lists the codes and their names in
+#   Balancing_Authority_<year>.xlsx.
+#   U.S. Energy Information Administration, Form EIA-861 detailed data
+#   files, https://www.eia.gov/electricity/data/eia861/
+# - ba_prefix: start of the names (field BA) of the area's polygons on the
+#   balancing area map shipped by PyPSA-USA,
+#   https://github.com/PyPSA/pypsa-usa/tree/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new
+#   (license MIT; citation in configs/texas_sample.yaml).
+# - veto_ignore_marks: RTO columns that never count as another area alone.
+#   Other names no RTO (decision K57).
+# Each ba_code was checked against the 2018 sales rows of the area's states
+# before use; a code not found there is reported, not changed.
+
+areas:
+  - name: "ERCOT"
+    states: ["TX"]
+    rto: "ERCOT"
+    ba_code: "ERCO"
+    ba_prefix: "ERCO"
+    veto_ignore_marks: ["Other"]
+  - name: "CAISO"
+    states: ["CA"]
+    rto: "CAISO"
+    ba_code: "CISO"
+    ba_prefix: "CISO"
+    veto_ignore_marks: ["Other"]
+  - name: "NYISO"
+    states: ["NY"]
+    rto: "NYISO"
+    ba_code: "NYIS"
+    ba_prefix: "NYISO"
+    veto_ignore_marks: ["Other"]
