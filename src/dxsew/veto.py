@@ -34,17 +34,29 @@ the state of the county:
 
 A utility the lookups do not resolve stays unknown and blocks the veto, as
 in K57. With the lookups off the veto is K57 exactly.
+
+Report-only CLI, for one area of ``configs/veto_areas.yaml`` and with no
+SMART-DS data::
+
+    uv run python -m dxsew.veto --areas configs/veto_areas.yaml --area CAISO --stamp <stamp>
 """
 
 from __future__ import annotations
 
+import argparse
 import io
 import re
+import sys
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import shapefile
+import yaml
+from shapely import make_valid, unary_union
+from shapely.geometry import shape
 
 from dxsew.sources.eia861 import read_sales
 
@@ -480,3 +492,192 @@ def lookup_table(zip_path: Path, source: dict, sales_year: int) -> pd.DataFrame:
         return pd.DataFrame(columns=LOOKUP_COLUMNS)
     inputs = read_inputs(zip_path, source, sales_year, True)
     return lookup_rows(inputs, source["state"], source["rto"], ba_code)
+
+
+# Report-only run for one area (no SMART-DS data).
+
+# State FIPS codes by postal code, the field STATEFP of the TIGER/Line county
+# file. Source: U.S. Census Bureau, "State FIPS codes",
+# https://www2.census.gov/geo/docs/reference/state.txt
+STATE_FIPS = {
+    "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09", "DE": "10",
+    "DC": "11", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18", "IA": "19",
+    "KS": "20", "KY": "21", "LA": "22", "ME": "23", "MD": "24", "MA": "25", "MI": "26", "MN": "27",
+    "MS": "28", "MO": "29", "MT": "30", "NE": "31", "NV": "32", "NH": "33", "NJ": "34", "NM": "35",
+    "NY": "36", "NC": "37", "ND": "38", "OH": "39", "OK": "40", "OR": "41", "PA": "42", "RI": "44",
+    "SC": "45", "SD": "46", "TN": "47", "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53",
+    "WV": "54", "WI": "55", "WY": "56",
+}
+# ASSUMPTION, for this report only: a county is "in the map area" when at
+# least half of its area lies in polygons whose name starts with ba_prefix.
+# The value is not taken from a source; it only sorts counties into classes.
+SHARE_THRESHOLD = 0.5
+REPORT_COLUMNS = [
+    "state", "county_eia", "county", "county_geoid", "share_in_area", "reason_k57", "vetoed_k57",
+    "reason", "vetoed", "utility_marks", "class",
+]
+
+
+def read_shapes(shp_path: Path, key: str, keep=lambda record: True) -> list[tuple[dict, object]]:
+    """``(record, geometry)`` of the shapefile records that ``keep`` accepts; ``key`` must be a field."""
+    found = []
+    with shapefile.Reader(str(shp_path)) as reader:
+        names = [field[0] for field in reader.fields[1:]]
+        if key not in names:
+            raise ValueError(f"No field {key!r} in {shp_path}.")
+        for index, values in enumerate(reader.iterRecords()):
+            record = dict(zip(names, values))
+            if keep(record):
+                found.append((record, shape(reader.shape(index).__geo_interface__)))
+    return found
+
+
+def area_shares(counties: list[tuple[dict, object]], polygons: list) -> list[float]:
+    """Share of each county's area that lies inside the union of ``polygons``.
+
+    ASSUMPTION: shares are computed on longitude and latitude degrees, not on
+    an equal-area projection. Within one county the two differ by a
+    negligible amount, since the scale of a degree of longitude changes
+    little across a county.
+    """
+    union = unary_union([make_valid(p) for p in polygons]) if polygons else None
+    shares = []
+    for _, geometry in counties:
+        geometry = make_valid(geometry)
+        if union is None or geometry.area == 0:
+            shares.append(0.0)
+        else:
+            shares.append(geometry.intersection(union).area / geometry.area)
+    return shares
+
+
+def report_class(share: float, vetoed: bool, reads_as_area: bool) -> str:
+    """Class of a county in the report (``SHARE_THRESHOLD``, an ASSUMPTION, splits in from out)."""
+    if share >= SHARE_THRESHOLD:
+        return "map_in_veto_out" if vetoed else "map_in_kept"
+    return "map_out_utilities_in" if reads_as_area else "map_out"
+
+
+def area_report(
+    inputs_by_state: dict[str, Inputs],
+    counties_by_state: dict[str, list[tuple[dict, object]]],
+    polygons: list,
+    area: dict,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """County table, lookup table and notes of one area (report only).
+
+    ``inputs_by_state`` holds the EIA-861 inputs of each state of the area
+    (``read_inputs`` with the lookups on), ``counties_by_state`` the Census
+    counties of each state (records with ``GEOID`` and ``NAME``), and
+    ``polygons`` the map polygons whose name starts with ``ba_prefix``.
+    Counties are joined by state and ``name_key``.
+    """
+    rto, ba_code, ignore = area["rto"], area["ba_code"], area.get("veto_ignore_marks", [])
+    tables, lookups, notes = [], [], {"eia_counties_not_in_census": [], "census_counties_not_in_eia": []}
+    for state in area["states"]:
+        inputs = inputs_by_state[state]
+        table = veto_with_lookups(inputs, state, rto, ba_code, ignore, True)
+        counties = counties_by_state[state]
+        shares = dict(zip((name_key(r["NAME"]) for r, _ in counties), area_shares(counties, polygons)))
+        census = {name_key(r["NAME"]): r for r, _ in counties}
+        answers = {
+            county: resolve_marks(sorted(set(g["Utility Number"])), state, rto, ba_code, inputs.in_state,
+                                  inputs.all_states, inputs.sales, True)
+            for county, g in inputs.territory.groupby("County")
+        }
+        table.insert(0, "state", state)
+        table["county"] = table["county_key"].map(lambda k: census[k]["NAME"] if k in census else None)
+        table["county_geoid"] = table["county_key"].map(lambda k: census[k]["GEOID"] if k in census else None)
+        table["share_in_area"] = table["county_key"].map(shares).round(6)
+        reads = {c: any(a.marks is not None and rto in a.marks for a in found) for c, found in answers.items()}
+        table["class"] = [
+            report_class(0.0 if pd.isna(s) else s, bool(v), reads[c])
+            for s, v, c in zip(table["share_in_area"], table["vetoed"], table["county_eia"])
+        ]
+        notes["eia_counties_not_in_census"] += [f"{state} {c}" for c in table.loc[table["county"].isna(), "county_eia"]]
+        notes["census_counties_not_in_eia"] += sorted(
+            f"{state} {r['NAME']}" for k, r in census.items() if k not in set(table["county_key"])
+        )
+        tables.append(table)
+        found = lookup_rows(inputs, state, rto, ba_code)
+        found.insert(0, "state", state)
+        lookups.append(found)
+    report = pd.concat(tables, ignore_index=True).reindex(columns=REPORT_COLUMNS)
+    report = report.sort_values(["state", "county_eia"], kind="mergesort").reset_index(drop=True)
+    return report, pd.concat(lookups, ignore_index=True), notes
+
+
+def _settings_at(settings: dict, dotted: str) -> dict:
+    for part in dotted.split("."):
+        settings = settings[part]
+    return settings
+
+
+def _read_yaml(path: Path) -> dict:
+    with Path(path).open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def _need(path: Path) -> Path:
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} is missing; the report reads only files already on disk.")
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Report-only EIA-861 veto for one balancing area.")
+    parser.add_argument("--areas", required=True, help="settings of the areas, configs/veto_areas.yaml")
+    parser.add_argument("--area", required=True, help="name of one area of the settings")
+    parser.add_argument("--stamp", default=None, help="UTC stamp of the output names; default now")
+    args = parser.parse_args(argv)
+
+    areas_path = Path(args.areas).resolve()
+    configs = areas_path.parent
+    settings = _read_yaml(areas_path)
+    by_name = {entry["name"]: entry for entry in settings["areas"]}
+    if args.area not in by_name:
+        raise KeyError(f"No area {args.area!r} in {areas_path}; areas: {', '.join(by_name)}.")
+    area = by_name[args.area]
+    sources = settings["sources"]
+    shared = _read_yaml(configs / sources["settings_file"])
+    eia = dict(_settings_at(shared, sources["eia861"]))
+    census = _settings_at(shared, sources["counties"])
+    map_source = _settings_at(shared, sources["map"])
+    data_root = Path(_read_yaml(configs / "local.yaml")["data_root"])
+    stamp = args.stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    year = int(sources["eia861_year"])
+
+    eia_zip = _need(data_root / "eia" / eia["url"].rsplit("/", 1)[-1])
+    county_zip = _need(data_root / "census" / census["url"].rsplit("/", 1)[-1])
+    shp = _need(data_root / "geo" / map_source["folder"] / map_source["ba_shapes"].rsplit("/", 1)[-1])
+
+    inputs_by_state, counties_by_state = {}, {}
+    for state in area["states"]:
+        source = {**eia, "state": state, "rto": area["rto"]}
+        inputs_by_state[state] = read_inputs(eia_zip, source, year, True)
+        fips = STATE_FIPS[state]
+        counties_by_state[state] = sorted(
+            read_shapes(county_zip, "STATEFP", lambda r, f=fips: r["STATEFP"] == f), key=lambda item: item[0]["GEOID"]
+        )
+    prefix = area["ba_prefix"]
+    polygons = [g for r, g in read_shapes(shp, "BA") if str(r["BA"]).strip().startswith(prefix)]
+    report, lookups, notes = area_report(inputs_by_state, counties_by_state, polygons, area)
+
+    out = data_root / settings["output_folder"]
+    out.mkdir(parents=True, exist_ok=True)
+    for table, name in ((report, f"veto_area_{area['name']}_{stamp}.csv"), (lookups, f"veto_lookups_{area['name']}_{stamp}.csv")):
+        temporary = out / f"{name}.part"
+        table.to_csv(temporary, index=False, lineterminator="\n")
+        temporary.replace(out / name)
+    print(f"area {area['name']}: states {', '.join(area['states'])}, rto {area['rto']}, ba_code {area['ba_code']}, "
+          f"ba_prefix {prefix} ({len(polygons)} polygons)")
+    for key, value in notes.items():
+        print(f"{key}: {value}")
+    print(report.groupby(["class"]).size().to_string())
+    print(pd.crosstab(report["reason_k57"], report["reason"]).to_string())
+    print(f"written to {out} with stamp {stamp}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

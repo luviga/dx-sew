@@ -5,6 +5,7 @@ import zipfile
 
 import pandas as pd
 import pytest
+import shapefile
 import yaml
 from shapely.geometry import box
 
@@ -75,10 +76,12 @@ def sales_sheet(rows) -> pd.DataFrame:
     return pd.DataFrame([group, measure, names + ["Megawatthours"] * 4, *body])
 
 
-def write_zip(path, utilities, served):
+def write_zip(path, utilities, served, state_name="ZZ"):
+    """EIA-861 sheets of the utilities; the state ZZ of the tables is written as ``state_name``."""
     folder = path.parent
+    name_of = {"ZZ": state_name}
     territory = pd.DataFrame(
-        [(2018, n, utilities[n][0], "ZZ", county) for county, numbers in served.items() for n in numbers],
+        [(2018, n, utilities[n][0], state_name, county) for county, numbers in served.items() for n in numbers],
         columns=["Data Year", "Utility Number", "Utility Name", "State", "County"],
     )
     group = ["Utility Characteristics", None, None, None, "Operating in these RTOs", *[None] * (len(RTOS) - 1), "Other Activities"]
@@ -86,9 +89,9 @@ def write_zip(path, utilities, served):
     utility_rows, sales_rows, short_rows = [group, names], [], []
     for n, (name, rows, sales, short) in utilities.items():
         for state, marks in rows.items():
-            utility_rows.append([2018, n, name, state, *["Y" if m in marks else "N" for m in RTOS], "Y"])
-        sales_rows += [(n, name, state, service, code) for state, service, code in sales]
-        short_rows += [(2018, n, name, state, code) for state, code in short]
+            utility_rows.append([2018, n, name, name_of.get(state, state), *["Y" if m in marks else "N" for m in RTOS], "Y"])
+        sales_rows += [(n, name, name_of.get(state, state), service, code) for state, service, code in sales]
+        short_rows += [(2018, n, name, name_of.get(state, state), code) for state, code in short]
     territory.to_excel(folder / "territory.xlsx", sheet_name="Counties_States", index=False)
     pd.DataFrame(utility_rows).to_excel(folder / "utility.xlsx", sheet_name="States", index=False, header=False)
     sales_sheet(sales_rows).to_excel(folder / "sales.xlsx", sheet_name="States", index=False, header=False)
@@ -288,3 +291,111 @@ def test_settings_files_hold_the_three_names():
         "CAISO": (["CA"], "CAISO", "CISO", "CISO", ["Other"]),
         "NYISO": (["NY"], "NYISO", "NYIS", "NYISO", ["Other"]),
     }
+
+
+# Report-only run for one area: hand-made sheets, counties and two polygons.
+REPORT_SERVED = {"A": [1, 3], "C": [1, 5], "H": [1, 10], "J": [2], "Q": [1]}
+REPORT_COUNTIES = {  # Census name: square; Q has no Census county, Zed no EIA-861 row
+    "A": box(0, 0, 1, 1),
+    "C": box(1, 0, 2, 1),
+    "H": box(2, 0, 3, 1),
+    "J": box(3, 0, 4, 1),
+    "Zed": box(4, 0, 5, 1),
+}
+# The area's polygon covers A and half of C; a non-RTO polygon covers the rest.
+REPORT_POLYGONS = {"CISO-X": box(0, 0, 1.5, 1), "LDWP": box(1.5, 0, 5, 1)}
+CAISO_AREA = {"name": "CAISO", "states": ["NV"], "rto": "CAISO", "ba_code": "CISO", "ba_prefix": "CISO",
+              "veto_ignore_marks": ["Other"]}
+
+
+def write_shapes(path, field, shapes, extra=None):
+    with shapefile.Writer(str(path), shapeType=shapefile.POLYGON) as writer:
+        for name in [field, *(extra or {})]:
+            writer.field(name, "C", size=20)
+        for key, geometry in shapes.items():
+            writer.poly([list(geometry.exterior.coords)])
+            writer.record(key, *[(value(key) if callable(value) else value) for value in (extra or {}).values()])
+
+
+@pytest.fixture
+def report_files(tmp_path):
+    data, configs = tmp_path / "data", tmp_path / "configs"
+    for folder in (data / "eia", data / "census", data / "geo" / "m", configs, tmp_path / "work"):
+        folder.mkdir(parents=True)
+    write_zip(tmp_path / "work" / "eia.zip", UTILITIES, REPORT_SERVED, state_name="NV")
+    (tmp_path / "work" / "eia.zip").replace(data / "eia" / "eia.zip")
+    geoids = {name: f"32{index:03d}" for index, name in enumerate(REPORT_COUNTIES, start=1)}
+    write_shapes(tmp_path / "work" / "counties", "NAME", REPORT_COUNTIES,
+                 {"STATEFP": "32", "GEOID": lambda name: geoids[name]})
+    with zipfile.ZipFile(data / "census" / "counties.zip", "w") as archive:
+        for ending in (".shp", ".shx", ".dbf"):
+            archive.write(tmp_path / "work" / f"counties{ending}", f"counties{ending}")
+    write_shapes(data / "geo" / "m" / "map", "BA", REPORT_POLYGONS)
+    shared = {
+        "geography": {
+            "balancing_area": {**{k: v for k, v in BASE.items() if k not in ("state", "veto")},
+                               "url": "https://example.org/eia.zip"},
+            "counties": {"url": "https://example.org/counties.zip"},
+            "balancing_area_map": {"ba_shapes": "https://example.org/map.shp", "folder": "m"},
+        }
+    }
+    (configs / "shared.yaml").write_text(yaml.safe_dump(shared), encoding="utf-8")
+    areas = {
+        "sources": {"settings_file": "shared.yaml", "eia861": "geography.balancing_area",
+                    "counties": "geography.counties", "map": "geography.balancing_area_map", "eia861_year": 2018},
+        "output_folder": "out",
+        "areas": [CAISO_AREA],
+    }
+    (configs / "veto_areas.yaml").write_text(yaml.safe_dump(areas), encoding="utf-8")
+    (configs / "local.yaml").write_text(yaml.safe_dump({"data_root": str(data)}), encoding="utf-8")
+    return configs / "veto_areas.yaml", data / "out"
+
+
+def test_report_class_and_shares():
+    assert veto.report_class(0.5, True, False) == "map_in_veto_out"
+    assert veto.report_class(0.5, False, False) == "map_in_kept"
+    assert veto.report_class(0.49, True, True) == "map_out_utilities_in"
+    assert veto.report_class(0.0, False, False) == "map_out"
+    counties = [({}, box(0, 0, 1, 1)), ({}, box(1, 0, 2, 1)), ({}, box(2, 0, 3, 1))]
+    shares = veto.area_shares(counties, [box(0, 0, 1.5, 1)])
+    assert shares == pytest.approx([1.0, 0.5, 0.0])
+    assert veto.area_shares(counties, []) == [0.0, 0.0, 0.0]
+
+
+def test_report_cli_writes_one_row_per_county_with_its_class(report_files, capsys):
+    areas_path, out = report_files
+    assert veto.main(["--areas", str(areas_path), "--area", "CAISO", "--stamp", "S1"]) == 0
+    table = pd.read_csv(out / "veto_area_CAISO_S1.csv", dtype={"county_geoid": str})
+    assert list(table.columns) == veto.REPORT_COLUMNS
+    rows = table.set_index("county_eia")
+    assert rows["class"].to_dict() == {
+        "A": "map_in_veto_out",  # all inside, SPP via lookup 1
+        "C": "map_in_veto_out",  # half inside, BA ERCO via lookup 2
+        "H": "map_out_utilities_in",  # outside, CAISO via the sales rows of another state
+        "J": "map_out",  # outside, ERCOT only
+        "Q": "map_out",  # no Census county: no share
+    }
+    assert rows.loc["C", "share_in_area"] == pytest.approx(0.5)
+    assert rows.loc["A", ["county", "county_geoid", "state"]].tolist() == ["A", "32001", "NV"]
+    assert pd.isna(rows.loc["Q", "county_geoid"])
+    assert rows.loc["A", ["reason_k57", "reason"]].tolist() == [veto.MISSING_ROW, veto.VETOED]
+    assert rows.loc["H", "reason"] == veto.REPORTS_RTO
+    printed = capsys.readouterr().out
+    assert "eia_counties_not_in_census: ['NV Q']" in printed
+    assert "census_counties_not_in_eia: ['NV Zed']" in printed
+    looked_up = pd.read_csv(out / "veto_lookups_CAISO_S1.csv")
+    assert sorted(looked_up["utility_number"]) == [3, 5, 10]
+    assert set(looked_up["state"]) == {"NV"}
+
+
+def test_report_cli_is_reproducible_and_stops_on_a_missing_file(report_files):
+    areas_path, out = report_files
+    veto.main(["--areas", str(areas_path), "--area", "CAISO", "--stamp", "S1"])
+    veto.main(["--areas", str(areas_path), "--area", "CAISO", "--stamp", "S2"])
+    for name in ("veto_area_CAISO", "veto_lookups_CAISO"):
+        assert (out / f"{name}_S1.csv").read_bytes() == (out / f"{name}_S2.csv").read_bytes()
+    with pytest.raises(KeyError, match="NOPE"):
+        veto.main(["--areas", str(areas_path), "--area", "NOPE", "--stamp", "S3"])
+    (areas_path.parent.parent / "data" / "eia" / "eia.zip").unlink()
+    with pytest.raises(FileNotFoundError):
+        veto.main(["--areas", str(areas_path), "--area", "CAISO", "--stamp", "S4"])

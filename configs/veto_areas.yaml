@@ -1,6 +1,8 @@
 # Settings of the frame procedure for any balancing area (decisions K56,
 # K57 and K58): three names per area, plus its states and ignored marks.
-# Method: docs/frame_procedure.md.
+# Method: docs/frame_procedure.md. Report-only run of the EIA-861 veto for
+# one area, with no SMART-DS data:
+#   uv run python -m dxsew.veto --areas configs/veto_areas.yaml --area <name> --stamp <stamp>
 #
 # Fields of an area:
 # - name: name of the area in output file names.
@@ -21,6 +23,21 @@
 #   Other names no RTO (decision K57).
 # Each ba_code was checked against the 2018 sales rows of the area's states
 # before use; a code not found there is reported, not changed.
+
+# Source files and their layout come from these keys of another settings
+# file in this folder, so they are written in one place; files are read
+# from data_root of configs/local.yaml (eia, census and geo folders) and
+# never downloaded by the report.
+sources:
+  settings_file: "texas_sample.yaml"
+  eia861: "geography.balancing_area"
+  counties: "geography.counties"
+  map: "geography.balancing_area_map"
+  # Year of the EIA-861 files of that zip (f8612018.zip).
+  eia861_year: 2018
+
+# Folder under data_root that receives the report files.
+output_folder: "texas"
 
 areas:
   - name: "ERCOT"
