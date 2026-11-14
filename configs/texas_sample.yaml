@@ -1,0 +1,139 @@
+# Settings of the stratified Texas sample of whole SMART-DS substations.
+# Method note with every source: docs/texas_sample.md.
+
+release:
+  # SMART-DS v0.9 Full Texas, year 2018, on the OEDI data lake (public bucket).
+  # https://data.openei.org/s3_viewer?bucket=oedi-data-lake&prefix=SMART-DS%2Fv0.9%2F2018%2FFull_Texas%2F
+  bucket_url: "https://oedi-data-lake.s3.amazonaws.com"
+  prefix: "SMART-DS/v0.9/2018/Full_Texas/"
+  # Tree of one sub-region that holds one folder per substation.
+  opendss_tree: "scenarios/base_timeseries/opendss"
+  # Folders of that tree that are not substations.
+  not_substations: ["subtransmission"]
+  # Folder of the load-data parquets, shared by all sub-regions.
+  load_data_folder: "load_data"
+  # Name of the saved listing under <data_root>/oedi.
+  listing_file: "full_texas_2018_listing.parquet"
+
+geography:
+  counties:
+    # U.S. Census Bureau, TIGER/Line 2018 county boundaries.
+    url: "https://www2.census.gov/geo/tiger/TIGER2018/COUNTY/tl_2018_us_county.zip"
+    # State FIPS code of Texas, field STATEFP of the same file.
+    state_fips: "48"
+  balancing_area:
+    # U.S. Energy Information Administration, Form EIA-861 detailed data, 2018.
+    # Page: https://www.eia.gov/electricity/data/eia861/
+    # The utility data file reports the ISOs and RTOs each utility operates in;
+    # PUDL publishes it as core_eia861__yearly_utility_data_rto,
+    # https://data.catalyst.coop/preview/pudl/core_eia861__yearly_utility_data_rto
+    url: "https://www.eia.gov/electricity/data/eia861/archive/zip/f8612018.zip"
+    state: "TX"
+    # ISO or RTO of the county status (decision K52, kept as the column
+    # county_status_eia861 for checking; the frame follows the map below):
+    # a county has this status when every utility serving it reports
+    # operating in this RTO. The name is a column of the RTO group of the
+    # utility data file (CAISO, ERCOT, PJM, NYISO, SPP, MISO, ISONE).
+    rto: "ERCOT"
+    # Veto of the frame (decision K57), a second step after the map below:
+    # a substation leaves the frame when the utilities of its county report,
+    # on the utility data file, that their customers belong to another RTO.
+    # A county is vetoed when every utility serving it has a utility data
+    # row in the state, every one marks at least one RTO, none marks rto,
+    # and every one marks at least one RTO that is neither rto nor in
+    # veto_ignore_marks. The veto only removes, never adds; a blank answer,
+    # a missing row, a mark in veto_ignore_marks alone, and a county where
+    # some utilities mark rto never remove. With veto: false the frame
+    # follows the map and a climate zone alone.
+    veto: true
+    veto_ignore_marks: ["Other"]
+    # Two lookups of the veto (decision K58), inside the same EIA-861 files,
+    # for a utility with no answer in the state; every K57 rule above stays.
+    # 1. A utility with no utility data row in the state takes the marks of
+    #    its rows in other states.
+    # 2. A utility that still has no mark takes the balancing authority
+    #    codes of its own sales rows (Sales_Ult_Cust and Short_Form files of
+    #    the same zip), in the state first and in any state if it has none
+    #    there. The code ba_code counts as rto; any other code counts as
+    #    another area, whether or not that area is an RTO.
+    # A utility the lookups do not resolve stays unknown, and unknown never
+    # removes. With veto_lookups: false the veto is K57 exactly. The same
+    # procedure for any balancing area: docs/frame_procedure.md and
+    # configs/veto_areas.yaml.
+    veto_lookups: true
+    # Balancing authority code of the area in the column BA Code of the
+    # sales rows; the zip lists the codes in Balancing_Authority_2018.xlsx.
+    # Required when veto_lookups is on.
+    ba_code: "ERCO"
+    territory_file: "Service_Territory_2018.xlsx"
+    territory_sheet: "Counties_States"
+    utility_file: "Utility_Data_2018.xlsx"
+    utility_sheet: "States"
+    # Row of the utility data sheet with the column names (first row is 0);
+    # the row above it holds the column groups.
+    utility_header_row: 1
+    rto_group: "Operating in these RTOs"
+  balancing_area_map:
+    # Frame rule (decision K56): a substation is in the frame when the
+    # centroid of its load buses lies inside one polygon of this map whose
+    # name (field BA) starts with ba_prefix. The county status from EIA-861
+    # above is kept as the column county_status_eia861, for checking only.
+    # Map: balancing area shapes shipped by PyPSA-USA and used there as its
+    # onshore shapes (workflow/rules/build_electricity.smk), NAD83 geographic.
+    # https://github.com/PyPSA/pypsa-usa/tree/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new
+    # License: MIT, https://github.com/PyPSA/pypsa-usa/blob/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/LICENSE.md
+    # Citation (CITATION.cff of the repository): K. Tehranchi, T. Barnes,
+    # M. Frysztacki, I. M. L. Azevedo, "Costs and benefits of transmission
+    # investments in the United States under different policy scenarios",
+    # Environmental Research Letters 21 (2026) 194039,
+    # https://doi.org/10.1088/1748-9326/aea586 ; software "PyPSA-USA: An
+    # Open-Source Energy System Optimization Model for the United States",
+    # https://doi.org/10.5281/zenodo.10815964
+    ba_shapes: "https://raw.githubusercontent.com/PyPSA/pypsa-usa/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new/Modified_BE_BA_Shapes.shp"
+    # Files of the shapefile downloaded beside it, under <data_root>/geo/<folder>.
+    companions: [".shx", ".dbf", ".prj"]
+    folder: "pypsa_usa_ba"
+    # Start of the polygon names of the balancing area of the frame; the
+    # ERCOT polygons are ERCO-C, ERCO-E, ERCO-FW, ERCO-N, ERCO-NC, ERCO-S,
+    # ERCO-SC and ERCO-W.
+    ba_prefix: "ERCO"
+  climate_zone:
+    # ResStock 2024 release 2 baseline metadata of Texas, placed by the user
+    # under eulp_metadata_root (configs/local.yaml).
+    # https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_tmy3_release_2/
+    metadata_file: "Metadata_TX_Residential/TX_baseline_metadata_and_annual_results.csv"
+    county_column: "in.county"
+    zone_column: "in.building_america_climate_zone"
+
+sample:
+  # Strata: kind of sub-region (U or R, the last letter of its name) crossed
+  # with the Building America climate zone of the county of the substation.
+  selection_rule: "ASSUMPTION: within each stratum, substations are ordered by load count and drawn by systematic selection from a random start with seed 555, so the sample spreads over substation sizes. A stratum with fewer substations than the target is taken whole."
+  # The seed is random_seed of pipeline_config.yaml of DeltaE/dss-eulp-coupling.
+  seed: 555
+  # Substations drawn and staged per stratum.
+  per_stratum: 2
+  # Sizes of the size table (substations per stratum); estimates only.
+  sizes: [1, 2, 3, 5]
+  # Run time per feeder for the hours of the size table, in minutes.
+  # --minutes-per-feeder of the sample CLI replaces these when given.
+  minutes_per_feeder:
+    - minutes: 17.88
+      label: "measured on one substation at the pin on Machine 3: three feeders, both seasons, three mixes (baseline, mixed, stress)"
+    - minutes: 5.96
+      label: "measured on one substation at the pin on Machine 3: the same run per feeder and per mix, one third of 17.88"
+
+staging:
+  # Folder under smart_ds_base (configs/local.yaml) that receives the sample.
+  folder: "SMART-DS_v0.9_2018_Full_Texas"
+  # Flat folder of the load-data parquets inside it.
+  parquet_folder: "parquet_data"
+  # Layout of one staged substation below the folder:
+  # <subregion>/<opendss_relpath>/<substation>/
+  opendss_relpath: "base_timeseries/opendss"
+
+coupling:
+  # Values written into the settings of DeltaE/dss-eulp-coupling.
+  topology_state: "TX"
+  donor_id: "TX"
+  status: "ready"

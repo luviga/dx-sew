@@ -1,0 +1,6 @@
+# The one commit of DeltaE/dss-eulp-coupling that dx-sew runs (decision K53).
+# dxsew.coupling.check_pin() stops when the coupling clone is at another commit
+# or has local changes. The pin moves only by a recorded decision, after a
+# reference substation is rerun at the old and the new pin (docs/coupling.md).
+repository: https://github.com/DeltaE/dss-eulp-coupling
+commit: 154fa8d378b3e96a9799a01f3b719abf4235ad83
