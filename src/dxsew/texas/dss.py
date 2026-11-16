@@ -1,8 +1,8 @@
 """Readers of the SMART-DS OpenDSS text files used by the Texas sample.
 
-Only three files are read: ``Loads.dss`` of a feeder, ``Buscoords.dss`` and
-``Transformers.dss`` of a substation folder. The files are parsed as text;
-no circuit is compiled.
+The files read are ``Loads.dss``, ``Lines.dss`` and ``Transformers.dss`` of a
+feeder, and ``Buscoords.dss`` and ``Transformers.dss`` of a substation
+folder. The files are parsed as text; no circuit is compiled.
 
 Format of the release: https://data.openei.org/submissions/2981 (SMART-DS).
 """
@@ -120,3 +120,115 @@ def parse_transformer_kva(text: str) -> list[float]:
         if found:
             ratings.append(float(found.group(1)))
     return ratings
+
+
+# Length units a Line accepts (OpenDSS, https://opendss.epri.com/Units.html:
+# "none | mi | kft | km | m | Ft | in | cm"), as kilometres per unit. Factors
+# from NIST SP 811 Appendix B.9 (foot 0.3048 m, inch 0.0254 m, mile
+# 1609.344 m, all exact):
+# https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b9
+KM_PER_UNIT = {
+    "mi": 1.609344,
+    "kft": 0.3048,
+    "km": 1.0,
+    "m": 0.001,
+    "ft": 0.0003048,
+    "in": 0.0000254,
+    "cm": 0.00001,
+}
+KV_VALUE = re.compile(r"\bkv\s*=\s*([0-9.eE+-]+)", flags=re.IGNORECASE)
+KVS_VALUES = re.compile(r"\bkvs\s*=\s*[\[(\"']([^\])\"']*)", flags=re.IGNORECASE)
+NUMBER = re.compile(r"[0-9.eE+-]+")
+
+
+@dataclass(frozen=True)
+class Line:
+    name: str
+    bus1: str
+    bus2: str
+    length: float
+    units: str | None
+
+
+@dataclass(frozen=True)
+class Transformer:
+    name: str
+    kva: float | None
+    kvs: tuple[float, ...]
+
+
+def _bus(value: str) -> str:
+    return value.split(".", 1)[0].lower()
+
+
+def parse_lines(text: str) -> list[Line]:
+    """One ``Line`` per ``New Line.`` line of a ``Lines.dss`` file.
+
+    Buses lose their phase nodes and are lower case. A line without
+    ``length`` has length 0. ``units`` is the lower-case ``units`` value, or
+    None when the line gives none.
+    """
+    lines: list[Line] = []
+    for row in text.splitlines():
+        parts = row.split()
+        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("line."):
+            continue
+        values = properties(row)
+        length = values.get("length")
+        units = values.get("units")
+        lines.append(
+            Line(
+                name=parts[1].split(".", 1)[1],
+                bus1=_bus(values.get("bus1", "")),
+                bus2=_bus(values.get("bus2", "")),
+                length=float(length) if length is not None else 0.0,
+                units=units.lower() if units is not None else None,
+            )
+        )
+    return lines
+
+
+def line_length_km(line: Line, default_unit: str) -> tuple[float, bool]:
+    """Length of a line in km, and whether the line names a known unit.
+
+    A line with no ``units``, ``units=none`` or a name outside ``KM_PER_UNIT``
+    is read in ``default_unit``.
+    """
+    if line.units in KM_PER_UNIT:
+        return line.length * KM_PER_UNIT[line.units], True
+    return line.length * KM_PER_UNIT[default_unit], False
+
+
+def parse_transformers(text: str) -> list[Transformer]:
+    """One ``Transformer`` per ``New Transformer.`` line of a ``Transformers.dss`` file.
+
+    ``kva`` is the rating as in ``parse_transformer_kva`` (None when the line
+    gives none); ``kvs`` holds every ``kv`` value and every value of ``kvs``.
+    """
+    found: list[Transformer] = []
+    for row in text.splitlines():
+        parts = row.split()
+        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("transformer."):
+            continue
+        ratings = parse_transformer_kva(row)
+        kvs = [float(value) for value in KV_VALUE.findall(row)]
+        for group in KVS_VALUES.findall(row):
+            kvs.extend(float(value) for value in NUMBER.findall(group))
+        found.append(
+            Transformer(
+                name=parts[1].split(".", 1)[1],
+                kva=ratings[0] if ratings else None,
+                kvs=tuple(kvs),
+            )
+        )
+    return found
+
+
+def load_sector(yearly: str | None) -> str | None:
+    """Sector of a load: its load shape name before ``_kw`` (``res`` or ``com``).
+
+    The same split as ``parquet_name``; a name of another form gives None.
+    """
+    if not yearly or parquet_name(yearly) is None:
+        return None
+    return yearly.split("_", 1)[0].lower()

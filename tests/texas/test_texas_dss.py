@@ -1,5 +1,7 @@
 """Readers of the OpenDSS text files, on small hand-made inputs."""
 
+import math
+
 from dxsew.texas import dss
 
 LOADS = """\
@@ -55,3 +57,57 @@ def test_parse_transformer_kva_takes_the_first_winding():
         "New Transformer.sub_3 phases=3 windings=2 buses=(hv, lv3) kvs=(69, 12.47) kvas=(10000, 10000)\n"
     )
     assert dss.parse_transformer_kva(text) == [16000.0, 40000.0, 10000.0]
+
+
+LINES = """\
+New Line.l(r:a-b) Units=km Length=1.5 bus1=A.1.2.3 bus2=b.1.2.3 phases=3 Linecode=x
+New Line.l2 units=kft length=2 bus1=b.1 bus2=c.1 phases=1
+New Line.l3 Length=0.25 bus1=c.1 bus2=d.1
+New Line.l4 Units=m bus1=d bus2=e
+! New Line.off Units=km Length=99 bus1=x bus2=y
+"""
+
+
+def test_parse_lines_reads_buses_length_and_units():
+    lines = dss.parse_lines(LINES)
+    assert [line.name for line in lines] == ["l(r:a-b)", "l2", "l3", "l4"]
+    assert [(line.bus1, line.bus2) for line in lines] == [("a", "b"), ("b", "c"), ("c", "d"), ("d", "e")]
+    assert [line.length for line in lines] == [1.5, 2.0, 0.25, 0.0]
+    assert [line.units for line in lines] == ["km", "kft", None, "m"]
+
+
+def test_line_length_km_converts_every_opendss_unit():
+    def km(units, length=1.0):
+        return dss.line_length_km(dss.Line("x", "a", "b", length, units), "km")
+
+    assert km("km", 2.0) == (2.0, True)
+    assert km("m", 500.0) == (0.5, True)
+    assert km("kft", 1.0) == (0.3048, True)
+    assert math.isclose(km("ft", 1000.0)[0], 0.3048)
+    assert km("mi") == (1.609344, True)
+    assert math.isclose(km("in", 1e5)[0], 2.54)
+    assert km("cm", 1e5) == (1.0, True)
+    assert km(None, 3.0) == (3.0, False)
+    assert km("none", 3.0) == (3.0, False)
+    assert dss.line_length_km(dss.Line("x", "a", "b", 1.0, None), "m") == (0.001, False)
+
+
+def test_parse_transformers_reads_every_winding_voltage():
+    text = (
+        "New Transformer.t1 phases=1 windings=3 normhkva=11.0 wdg=1 bus=a.2 Kv=7.2 kva=10.0 "
+        "wdg=2 bus=alv.1.0 Kv=0.12 kva=10.0 wdg=3 bus=alv.0.2 Kv=0.12 kva=10.0\n"
+        "New Transformer.t2 phases=3 windings=2 buses=(b, blv) kvs=(12.47, 0.48) kvas=(75, 75)\n"
+        "New Transformer.t3 phases=1 windings=2 bus=c.1 bus=clv.1\n"
+    )
+    transformers = dss.parse_transformers(text)
+    assert [t.name for t in transformers] == ["t1", "t2", "t3"]
+    assert transformers[0].kvs == (7.2, 0.12, 0.12)
+    assert transformers[1].kvs == (12.47, 0.48)
+    assert [t.kva for t in transformers] == [10.0, 75.0, None]
+
+
+def test_load_sector_is_the_shape_name_before_kw():
+    assert dss.load_sector("res_kw_33706-Coast_pu") == "res"
+    assert dss.load_sector("COM_kw_7_pu") == "com"
+    assert dss.load_sector("flat") is None
+    assert dss.load_sector(None) is None
