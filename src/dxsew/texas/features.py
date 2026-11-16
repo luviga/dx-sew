@@ -35,12 +35,22 @@ From ``Lines.dss`` (empty when the feeder has no such file)
     distance between two buses of the line graph, line lengths as weights,
     by two sweeps of Dijkstra's search in every connected part; ASSUMPTION:
     exact on a radial feeder and a lower bound where loops exist);
-    ``graph_parts`` (connected parts of the line graph).
+    ``graph_parts`` (connected parts of the line graph). The line graph has
+    one edge per line and one edge of 0 km per regulator, between the buses
+    of its first two windings.
 From the feeder ``Transformers.dss`` (empty when the feeder has no such file)
-    ``service_transformers`` (transformer objects of the file);
-    ``service_kva`` (sum of ratings, ``dss.parse_transformer_kva``);
-    ``primary_kv`` (highest ``kv`` or ``kvs`` value of any winding in the
-    file); ``kva_per_kw`` (``service_kva`` over ``load_kw``).
+    A transformer with a winding under ``groups.regulator_max_low_kv`` is a
+    service transformer; any other is a regulator.
+    ``service_transformers`` (service transformers of the file);
+    ``regulators`` (regulators of the file); ``service_kva`` (sum of the
+    service transformers' ratings, ``dss.parse_transformer_kva``);
+    ``primary_kv`` (``primary_kv``: the largest line-to-line voltage of the
+    service transformers' highest-voltage windings, rounded to
+    ``groups.primary_kv_decimals``); ``kva_per_kw`` (``service_kva`` over
+    ``load_kw``).
+From the substation name
+    ``name_kv`` (``name_kv``: the voltage of ``groups.name_kv`` for the last
+    part of the substation name; empty for any other last part).
 Flags of the coupling at its pin (problem log P1 and P2)
     ``no_res`` (no residential customer); ``no_com`` (no commercial
     customer); ``shared_shapes`` (load shapes used by loads of more than one
@@ -84,8 +94,10 @@ COLUMNS = IDENTITY + [
     "extent_km",
     "graph_parts",
     "service_transformers",
+    "regulators",
     "service_kva",
     "primary_kv",
+    "name_kv",
     "kva_per_kw",
     "no_res",
     "no_com",
@@ -94,7 +106,11 @@ COLUMNS = IDENTITY + [
     "runnable_alone",
 ]
 LINE_COLUMNS = ["lines", "line_km", "lines_without_units", "extent_km", "graph_parts"]
-TRANSFORMER_COLUMNS = ["service_transformers", "service_kva", "primary_kv", "kva_per_kw"]
+TRANSFORMER_COLUMNS = ["service_transformers", "regulators", "service_kva", "primary_kv", "kva_per_kw"]
+# Line-to-line over line-to-neutral voltage of a balanced three-phase system
+# (the phase-to-phase and phase-to-neutral phasors of a wye differ by the
+# square root of 3); a fact of the circuit, not a setting.
+LINE_TO_LINE_PER_LINE_TO_NEUTRAL = math.sqrt(3.0)
 
 
 def frame_feeders(objects: pd.DataFrame, frame: pd.DataFrame) -> pd.DataFrame:
@@ -174,6 +190,57 @@ def extent(lines: list[tuple[str, str, float]]) -> tuple[float, int]:
     return longest, parts
 
 
+def is_service(transformer: dss.Transformer, max_low_kv: float) -> bool:
+    """A service transformer has a winding under ``max_low_kv``; any other transformer is a regulator."""
+    return any(winding.kv is not None and winding.kv < max_low_kv for winding in transformer.windings)
+
+
+def regulator_edge(transformer: dss.Transformer) -> tuple[str, str] | None:
+    """Buses of the first two windings of a transformer, or None when either is not given."""
+    if len(transformer.windings) < 2:
+        return None
+    bus1, bus2 = transformer.windings[0].bus, transformer.windings[1].bus
+    if not bus1 or not bus2:
+        return None
+    return bus1, bus2
+
+
+def line_to_line_kv(transformer: dss.Transformer) -> float | None:
+    """Line-to-line voltage of the highest-voltage winding of a transformer (kV).
+
+    OpenDSS rates a 2- or 3-phase transformer phase to phase and any other
+    by its actual winding (https://opendss.epri.com/Properties16.html, ``kV``).
+    A transformer with ``phases=1`` whose highest-voltage winding names one
+    phase node (``.2`` or ``.2.0``) sits between a phase and neutral, so its
+    ``kv`` times the square root of 3 is the line-to-line voltage
+    (``groups.primary_kv_rule_assumption``). Any other transformer gives its
+    ``kv``. Ties of the highest voltage go to the first winding. None when no
+    winding has a ``kv``.
+    """
+    rated = [winding for winding in transformer.windings if winding.kv is not None]
+    if not rated:
+        return None
+    top = max(rated, key=lambda winding: winding.kv)
+    phase_nodes = [node for node in top.nodes if node != 0]
+    if transformer.phases == 1 and len(phase_nodes) == 1:
+        return top.kv * LINE_TO_LINE_PER_LINE_TO_NEUTRAL
+    return top.kv
+
+
+def primary_kv(transformers: list[dss.Transformer], decimals: int) -> float:
+    """Largest ``line_to_line_kv`` over the transformers given, rounded; NaN when none has one."""
+    values = [value for value in map(line_to_line_kv, transformers) if value is not None]
+    return round(max(values), decimals) if values else math.nan
+
+
+def name_kv(substation: str, table: dict) -> float:
+    """Voltage in ``table`` of the last part of a substation name (after the last ``_``); NaN otherwise."""
+    if "_" not in substation:
+        return math.nan
+    value = table.get(substation.rsplit("_", 1)[1])
+    return float(value) if value is not None else math.nan
+
+
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8", errors="replace")
 
@@ -203,10 +270,17 @@ def read_feeder(task: dict) -> dict:
         other_sector_loads=sum(1 for sector in sectors if sector not in ("res", "com")),
     )
     row.update({column: math.nan for column in LINE_COLUMNS + TRANSFORMER_COLUMNS})
+    row["name_kv"] = name_kv(task["substation"], task["name_kv"])
+    transformers = dss.parse_transformers(_read(task["transformers"])) if task["transformers"] else []
+    low = task["regulator_max_low_kv"]
+    service = [transformer for transformer in transformers if is_service(transformer, low)]
+    regulators = [transformer for transformer in transformers if not is_service(transformer, low)]
     if task["lines"]:
         lines = dss.parse_lines(_read(task["lines"]))
         lengths = [dss.line_length_km(line, task["default_unit"]) for line in lines]
-        span, parts = extent([(line.bus1, line.bus2, km) for line, (km, _) in zip(lines, lengths)])
+        edges = [(line.bus1, line.bus2, km) for line, (km, _) in zip(lines, lengths)]
+        edges += [(*edge, 0.0) for edge in map(regulator_edge, regulators) if edge is not None]
+        span, parts = extent(edges)
         row.update(
             lines=len(lines),
             line_km=float(sum(km for km, _ in lengths)),
@@ -215,14 +289,13 @@ def read_feeder(task: dict) -> dict:
             graph_parts=parts,
         )
     if task["transformers"]:
-        transformers = dss.parse_transformers(_read(task["transformers"]))
-        ratings = [transformer.kva for transformer in transformers if transformer.kva is not None]
-        kvs = [kv for transformer in transformers for kv in transformer.kvs]
+        ratings = [transformer.kva for transformer in service if transformer.kva is not None]
         service_kva = float(sum(ratings))
         row.update(
-            service_transformers=len(transformers),
+            service_transformers=len(service),
+            regulators=len(regulators),
             service_kva=service_kva,
-            primary_kv=max(kvs) if kvs else math.nan,
+            primary_kv=primary_kv(service, task["primary_kv_decimals"]),
             kva_per_kw=service_kva / load_kw if load_kw else math.nan,
         )
     row.update(
@@ -242,7 +315,7 @@ def feature_table(rows: list[dict]) -> tuple[pd.DataFrame, int]:
     table = table.reindex(columns=COLUMNS)
     for column in ["loads", "customers", "res_customers", "com_customers", "shared_shapes", "shared_pairs_total"]:
         table[column] = table[column].astype("int64")
-    for column in ["lines", "lines_without_units", "graph_parts", "service_transformers"]:
+    for column in ["lines", "lines_without_units", "graph_parts", "service_transformers", "regulators"]:
         table[column] = table[column].astype("Int64")
     for column in ["no_res", "no_com", "runnable_alone"]:
         table[column] = table[column].astype(bool)
@@ -331,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
         task["lines"] = by_feeder.get((*identity, network_names[0]))
         task["transformers"] = by_feeder.get((*identity, network_names[1]))
         task["default_unit"] = rule["line_units_default"]
+        task["regulator_max_low_kv"] = float(rule["regulator_max_low_kv"])
+        task["primary_kv_decimals"] = int(rule["primary_kv_decimals"])
+        task["name_kv"] = {str(key): float(value) for key, value in rule["name_kv"].items()}
         for name, key in zip(network_names, ("lines", "transformers")):
             if task[key] is None:
                 missing.append({**{k: task[k] for k in IDENTITY}, "file": name})
@@ -349,6 +425,10 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         write_csv(pd.DataFrame(missing), out / f"missing_network_files_{args.stamp}.csv")
     print(f"feeders missing a network file: {len({tuple(m[k] for k in IDENTITY) for m in missing})}")
+    unnamed = table.loc[table["name_kv"].isna(), "substation"].drop_duplicates()
+    print(f"substations whose name gives no name_kv: {len(unnamed)}")
+    if len(unnamed):
+        print(unnamed.to_string(index=False))
 
     bad = substation_check(table, frame)
     print(f"substations whose sums differ from the frame: {len(bad)}")

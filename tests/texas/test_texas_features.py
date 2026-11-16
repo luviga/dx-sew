@@ -4,7 +4,7 @@ import math
 
 import pandas as pd
 
-from dxsew.texas import features
+from dxsew.texas import dss, features
 
 
 def res(name, phases, shape, kw=1.0, bus="b1"):
@@ -32,6 +32,9 @@ def task(folder, loads, lines=None, transformers=None):
         "lines": write(folder, "Lines.dss", lines) if lines is not None else None,
         "transformers": write(folder, "Transformers.dss", transformers) if transformers is not None else None,
         "default_unit": "km",
+        "regulator_max_low_kv": 1.0,
+        "primary_kv_decimals": 3,
+        "name_kv": {"1247": 12.47, "25": 25.0, "4": 4.0},
     }
 
 
@@ -148,3 +151,99 @@ def test_substation_check_flags_a_sum_that_differs():
     assert features.substation_check(table, frame).empty
     frame["customers"] = 4
     assert len(features.substation_check(table, frame)) == 1
+
+
+SERVICE_1PH = (
+    "New Transformer.tr(r:{b}-{b}lv) phases=1 windings=3 wdg=1 bus={b}.{node} Kv={kv} kva=25.0 "
+    "wdg=2 bus={b}lv.1.0 Kv=0.12 kva=25.0 wdg=3 bus={b}lv.0.2 Kv=0.12 kva=25.0\n"
+)
+REGULATOR = (
+    "New Transformer.trans_reg_{n}(r:{a}-{b}) phases=3 windings=2 buses=({a}.1.2.3,{b}.1.2.3) "
+    "kvs=(12.47, 12.47) kvas=(10000.0, 10000.0)\n"
+)
+
+
+def test_regulators_are_split_from_the_service_transformers(tmp_path):
+    transformers = (
+        SERVICE_1PH.format(b="x", node="2", kv=7.2)
+        + "New Transformer.t2 phases=3 windings=2 buses=(y.1.2.3, ylv.1.2.3) kvs=(12.47, 0.48) kvas=(75, 75)\n"
+        + REGULATOR.format(n="a", a="m", b="n")
+        + REGULATOR.format(n="b", a="p", b="q")
+    )
+    row = features.read_feeder(
+        task(tmp_path, res("r", 1, 1, 50.0) + com("c", 3, 2, 50.0), transformers=transformers)
+    )
+    assert row["service_transformers"] == 2
+    assert row["regulators"] == 2
+    assert row["service_kva"] == 100.0
+    assert row["kva_per_kw"] == 1.0
+    assert features.is_service(dss.parse_transformers(transformers)[1], 1.0)
+    assert not features.is_service(dss.parse_transformers(transformers)[2], 1.0)
+
+
+def test_a_regulator_is_an_edge_of_0_km(tmp_path):
+    lines = (
+        "New Line.l1 Units=km Length=1 bus1=a.1.2.3 bus2=b.1.2.3\n"
+        "New Line.l2 Units=km Length=2 bus1=bx.1.2.3 bus2=c.1.2.3\n"
+    )
+    loads = res("r", 1, 1) + com("c", 3, 2)
+    alone = features.read_feeder(task(tmp_path, loads, lines=lines, transformers=SERVICE_1PH.format(b="c", node="1", kv=7.2)))
+    assert (alone["extent_km"], alone["graph_parts"]) == (2.0, 2)
+    bridged = features.read_feeder(
+        task(tmp_path, loads, lines=lines, transformers=REGULATOR.format(n="1", a="b", b="bx"))
+    )
+    assert bridged["regulators"] == 1
+    assert (bridged["extent_km"], bridged["graph_parts"]) == (3.0, 1)
+    assert bridged["lines"] == 2 and bridged["line_km"] == 3.0
+    assert features.extent([("a", "b", 1.0), ("b", "bx", 0.0), ("bx", "c", 2.0)]) == (3.0, 1)
+
+
+def test_primary_kv_one_phase_node_is_line_to_neutral(tmp_path):
+    for node in ("2", "2.0", "0.3"):
+        row = features.read_feeder(
+            task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=SERVICE_1PH.format(b="x", node=node, kv=7.2))
+        )
+        assert row["primary_kv"] == round(7.2 * math.sqrt(3), 3) == 12.471
+    row = features.read_feeder(
+        task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=SERVICE_1PH.format(b="x", node="1", kv=14.434))
+    )
+    assert row["primary_kv"] == 25.0
+
+
+def test_primary_kv_two_phase_nodes_is_line_to_line(tmp_path):
+    transformers = SERVICE_1PH.format(b="x", node="1.2", kv=12.47)
+    row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=transformers))
+    assert row["primary_kv"] == 12.47
+
+
+def test_primary_kv_three_phase_is_line_to_line_and_regulators_do_not_count(tmp_path):
+    transformers = (
+        "New Transformer.t3 phases=3 windings=2 buses=(y.1.2.3, ylv.1.2.3) kvs=(4.0, 0.48) kvas=(75, 75)\n"
+        + SERVICE_1PH.format(b="x", node="1", kv=2.309)
+        + "New Transformer.trans_reg_z phases=3 windings=2 buses=(m.1.2.3, n.1.2.3) kvs=(12.47, 12.47) kvas=(9, 9)\n"
+    )
+    row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=transformers))
+    # 2.309 times the square root of 3 is 3.999; the three-phase 4.0 is larger; the 12.47 regulator is left out
+    assert row["primary_kv"] == 4.0
+    assert row["regulators"] == 1
+
+
+def test_primary_kv_is_empty_without_a_service_transformer(tmp_path):
+    transformers = REGULATOR.format(n="1", a="a", b="b")
+    row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=transformers))
+    assert row["service_transformers"] == 0 and row["regulators"] == 1
+    assert math.isnan(row["primary_kv"])
+
+
+def test_name_kv_reads_the_last_part_of_the_substation_name():
+    table = {"1247": 12.47, "25": 25.0, "4": 4.0}
+    assert features.name_kv("p9uhs1_1247", table) == 12.47
+    assert features.name_kv("p1rhs2_25", table) == 25.0
+    assert features.name_kv("p3uhs0_4", table) == 4.0
+    assert math.isnan(features.name_kv("p3uhs0_69", table))
+    assert math.isnan(features.name_kv("p3uhs0", table))
+
+
+def test_name_kv_is_a_column_of_the_row(tmp_path):
+    row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2)))
+    assert row["name_kv"] == 12.47

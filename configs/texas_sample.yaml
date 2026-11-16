@@ -153,14 +153,34 @@ groups:
   features:
     - "log(customers)"
     - "log(load_kw)"
-    - "kw_per_customer"
+    - "log(kw_per_customer)"
     - "com_kw_share"
     - "log(line_km)"
     - "log(extent_km)"
     - "log(service_transformers)"
-    - "kva_per_kw"
+    - "log(kva_per_kw)"
     - "primary_kv"
-  features_assumption: "ASSUMPTION: size (customers, kW), load mix (kW per customer, commercial kW share), length (line km, extent) and equipment (service transformers, kVA per kW, primary voltage) describe a feeder well enough to group it; logs (of the value plus 1) keep the largest feeders from setting the scale alone."
+  features_assumption: "ASSUMPTION: size (customers, kW), load mix (kW per customer, commercial kW share), length (line km, extent) and equipment (service transformers, kVA per kW, primary voltage) describe a feeder well enough to group it; logs (of the value plus 1) keep the largest feeders from setting the scale alone, and kW per customer and kVA per kW are logged too because both have long tails that put single feeders tens of standard deviations out."
+  # Split of the feeder transformers: a transformer with a winding under this
+  # voltage (kV) is a service transformer; any other is a regulator.
+  regulator_max_low_kv: 1.0
+  regulator_max_low_kv_assumption: "ASSUMPTION: a service transformer has a winding under 1 kV; a transformer with no winding under this voltage is a voltage regulator or a primary-level transformer, not a service transformer."
+  # primary_kv: the system voltage line to line, the largest over the service
+  # transformers of the value of each one's highest-voltage winding; a
+  # single-phase transformer whose winding names one phase node is read line
+  # to neutral and multiplied by the square root of 3. Method note:
+  # docs/groups.md (OpenDSS kv property, https://opendss.epri.com/Properties16.html).
+  primary_kv_rule: "line_to_line"
+  primary_kv_rule_assumption: "ASSUMPTION: a single-phase transformer between one phase and neutral is rated line to neutral."
+  primary_kv_decimals: 3
+  primary_kv_decimals_assumption: "ASSUMPTION: three decimals keep the precision of the winding voltages the release writes and drop the float noise of the square root."
+  # name_kv: the voltage written as the last part of a substation name, after
+  # the last underscore. A last part not listed here leaves name_kv empty.
+  name_kv:
+    "1247": 12.47
+    "25": 25.0
+    "4": 4.0
+  name_kv_assumption: "ASSUMPTION: SMART-DS Texas substation names end in the system voltage line to line written without its decimal point (_1247 is 12.47 kV, _25 is 25 kV, _4 is 4 kV); the column is a check of primary_kv, not a grouping feature."
   # Scaling of every feature before grouping.
   scaling: "frame_z"
   scaling_assumption: "ASSUMPTION: each feature becomes (value minus frame mean) over frame standard deviation (population, ddof 0), over every frame feeder that has the feature, so every feature has the same spread and a distance means the same in every stratum."

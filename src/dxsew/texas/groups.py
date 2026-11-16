@@ -31,10 +31,19 @@ and the settings block ``groups`` of ``configs/texas_sample.yaml``.
    feeder (the ``runnable_alone`` feeder nearest the centre) with its
    distance, and the nearest feeder of any kind with its distance. Ties go to
    the first feeder in name order.
+6. Placeholders (decision K62). A group with no typical feeder takes, as
+   ``placeholder_group``, the group of the same stratum and k that has a
+   typical feeder and whose centre is nearest its own (Euclidean, scaled
+   features; ties to the lower group number); ``placeholder_feeder`` is that
+   group's typical feeder and ``placeholder_distance`` the distance from this
+   group's centre to it. The three are empty for a group with its own typical
+   feeder, and for every group of a stratum and k where no group has a
+   typical feeder (such cases are listed).
 
 Writes, under ``<data_root>/texas/``: ``groups_<stamp>.parquet`` (stratum, k,
 feeder, group), ``group_table_<stamp>.csv``, ``explained_<stamp>.csv``,
-``dial_<stamp>.csv``, ``small_groups_<stamp>.csv`` and, with
+``dial_<stamp>.csv`` (with the groups that use a placeholder and their
+customer share), ``small_groups_<stamp>.csv`` and, with
 ``--sample-stamp``, ``check_set_candidates_<stamp>.csv``.
 """
 
@@ -138,6 +147,32 @@ def nearest(points: np.ndarray, centre: np.ndarray, names: list[str], allowed: n
     return chosen, best
 
 
+def placeholders(
+    centres: dict[int, np.ndarray], typical: dict[int, str | None], points: dict[str, np.ndarray]
+) -> dict[int, tuple[int, str, float]]:
+    """Placeholder of every group without a typical feeder (module note, step 6).
+
+    ``centres`` and ``typical`` are keyed by group number, ``points`` by
+    feeder name. Gives ``group -> (placeholder group, placeholder feeder,
+    distance from the group's centre to that feeder)``. A group with its own
+    typical feeder is not in the result; the result is empty when no group
+    has a typical feeder.
+    """
+    donors = sorted(group for group, feeder in typical.items() if feeder is not None)
+    found: dict[int, tuple[int, str, float]] = {}
+    if not donors:
+        return found
+    for group in sorted(centres):
+        if typical.get(group) is not None:
+            continue
+        distance = {donor: float(np.sqrt(((centres[donor] - centres[group]) ** 2).sum())) for donor in donors}
+        best = min(distance.values())
+        donor = min(number for number, value in distance.items() if value == best)
+        feeder = typical[donor]
+        found[group] = (donor, feeder, float(np.sqrt(((points[feeder] - centres[group]) ** 2).sum())))
+    return found
+
+
 def nesting_ok(labels: dict[int, np.ndarray]) -> bool:
     """Every group at k+1 lies inside one group at k, for every k below the last."""
     ks = sorted(labels)
@@ -162,8 +197,12 @@ def group_stratum(
     customers = part["customers"].to_numpy(dtype="float64")
     runnable = part["runnable_alone"].to_numpy(dtype=bool)
     stratum_customers = customers.sum()
+    point_of = dict(zip(names, points))
     long_parts, group_rows, explained_rows = [], [], []
     for k, label in labels.items():
+        centres: dict[int, np.ndarray] = {}
+        typical_of: dict[int, str | None] = {}
+        rows_at_k = []
         long_parts.append(pd.DataFrame({"stratum": stratum, "k": k, "feeder": names, "group": label}))
         explained_rows.append(
             {"stratum": stratum, "k": k, "groups": int(len(np.unique(label))), "explained": explained(points, label)}
@@ -189,12 +228,25 @@ def group_stratum(
                 "typical_distance": typical_distance,
                 "nearest_feeder": any_feeder,
                 "nearest_distance": any_distance,
+                "placeholder_group": None,
+                "placeholder_feeder": None,
+                "placeholder_distance": float("nan"),
             }
             row.update({f"centre_{name}": float(value) for name, value in zip(features, centre)})
-            group_rows.append(row)
+            rows_at_k.append(row)
+            centres[int(group)] = centre
+            typical_of[int(group)] = typical
+        chosen = placeholders(centres, typical_of, point_of)
+        for row in rows_at_k:
+            if row["group"] in chosen:
+                donor, feeder, distance = chosen[row["group"]]
+                row.update(placeholder_group=donor, placeholder_feeder=feeder, placeholder_distance=distance)
+        group_rows.extend(rows_at_k)
+    group_table = pd.DataFrame(group_rows)
+    group_table["placeholder_group"] = group_table["placeholder_group"].astype("Int64")
     return (
         pd.concat(long_parts, ignore_index=True),
-        pd.DataFrame(group_rows),
+        group_table,
         pd.DataFrame(explained_rows),
         nesting_ok(labels),
     )
@@ -219,8 +271,17 @@ def small_groups(table: pd.DataFrame, shares: list[float]) -> pd.DataFrame:
 
 
 def dial(explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float]) -> pd.DataFrame:
-    """Smallest k reaching each target per stratum (or the cap), and typical feeders in total."""
+    """Smallest k reaching each target per stratum (or the cap), and typical feeders in total.
+
+    ``placeholder_groups`` counts the groups at that k that use a placeholder
+    and ``placeholder_customer_share`` is their customers over the stratum's
+    (in the row ``all``, over the customers of every stratum).
+    """
     typical = table.dropna(subset=["typical_feeder"]).groupby(["stratum", "k"]).size()
+    uses = table["placeholder_feeder"].notna()
+    placeholder_count = table[uses].groupby(["stratum", "k"]).size()
+    placeholder_customers = table[uses].groupby(["stratum", "k"])["customers"].sum()
+    all_customers = table.groupby(["stratum", "k"])["customers"].sum()
     rows = []
     for target in targets:
         chosen = []
@@ -237,6 +298,9 @@ def dial(explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float
                     "reached": bool(len(reached)),
                     "explained": float(pick["explained"]),
                     "typical_feeders": int(typical.get((stratum, k), 0)),
+                    "placeholder_groups": int(placeholder_count.get((stratum, k), 0)),
+                    "placeholder_customer_share": float(placeholder_customers.get((stratum, k), 0))
+                    / float(all_customers[(stratum, k)]),
                 }
             )
         rows.extend(chosen)
@@ -248,6 +312,11 @@ def dial(explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float
                 "reached": all(row["reached"] for row in chosen),
                 "explained": float("nan"),
                 "typical_feeders": sum(row["typical_feeders"] for row in chosen),
+                "placeholder_groups": sum(row["placeholder_groups"] for row in chosen),
+                "placeholder_customer_share": sum(
+                    float(placeholder_customers.get((row["stratum"], row["k"]), 0)) for row in chosen
+                )
+                / sum(float(all_customers[(row["stratum"], row["k"])]) for row in chosen),
             }
         )
     return pd.DataFrame(rows)
@@ -309,6 +378,8 @@ def build(features: pd.DataFrame, rule: dict) -> dict:
         explained_parts.append(explained_table)
         nested[stratum] = ok
     table = pd.concat(table_parts, ignore_index=True)
+    has_typical = table["typical_feeder"].notna().groupby([table["stratum"], table["k"]]).any()
+    no_placeholder = table.groupby(["stratum", "k"]).size()[~has_typical].rename("groups").reset_index()
     explained_table = pd.concat(explained_parts, ignore_index=True)
     return {
         "groups": pd.concat(long_parts, ignore_index=True),
@@ -317,6 +388,7 @@ def build(features: pd.DataFrame, rule: dict) -> dict:
         "dial": dial(explained_table, table, rule["dial_targets"]),
         "small_groups": small_groups(table, rule["small_share_report"]),
         "left_out": left_out.reset_index(drop=True),
+        "no_placeholder": no_placeholder,
         "nested": nested,
         "scale": pd.DataFrame({"feature": names, "mean": raw.mean().to_numpy(), "std": raw.std(ddof=0).to_numpy()}),
     }
@@ -383,6 +455,10 @@ def main(argv: list[str] | None = None) -> int:
         print(left_out.groupby("stratum").size().to_string())
         print(left_out.to_string(index=False))
     print(result["dial"].to_string(index=False))
+    no_placeholder = result["no_placeholder"]
+    print(f"strata and k with no typical feeder in any group, so no placeholder: {len(no_placeholder)}")
+    if len(no_placeholder):
+        print(no_placeholder.to_string(index=False))
     for name, ok in gates(result, features).items():
         print(f"gate {name}: {'pass' if ok else 'FAIL'}")
     print(f"written to {out} with stamp {args.stamp} in {time.perf_counter() - started:.0f} s")

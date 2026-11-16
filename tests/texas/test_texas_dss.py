@@ -111,3 +111,34 @@ def test_load_sector_is_the_shape_name_before_kw():
     assert dss.load_sector("COM_kw_7_pu") == "com"
     assert dss.load_sector("flat") is None
     assert dss.load_sector(None) is None
+
+
+def test_parse_transformers_reads_the_wdg_blocks():
+    text = (
+        "New Transformer.tr(r:p1-p1lv) phases=1 windings=3 %loadloss=0.8 normhkva=27.5 wdg=1 conn=wye "
+        "bus=P1.2 Kv=7.2 kva=25.0 %r=0.27 wdg=2 conn=wye bus=p1lv.1.0 Kv=0.12 kva=25.0 "
+        "wdg=3 conn=wye bus=p1lv.0.2 Kv=0.12 kva=25.0 XHL=2.4\n"
+    )
+    (transformer,) = dss.parse_transformers(text)
+    assert transformer.name == "tr(r:p1-p1lv)"
+    assert transformer.phases == 1
+    assert [w.bus for w in transformer.windings] == ["p1", "p1lv", "p1lv"]
+    assert [w.nodes for w in transformer.windings] == [(2,), (1, 0), (0, 2)]
+    assert [w.kv for w in transformer.windings] == [7.2, 0.12, 0.12]
+
+
+def test_parse_transformers_reads_the_buses_and_kvs_arrays():
+    text = (
+        "New Transformer.trans_reg_x(r:a-b) phases=3 windings=2 buses=(a-bx.1.2.3,a.1.2.3) "
+        "kvs=(25.0, 25.0) kvas=(20000.0, 20000.0)\n"
+        "New Transformer.t2 phases=1 windings=2 Buses=[c.3 clv.1.2] kVs=[14.434 0.24] kvas=[50 50]\n"
+        "New Transformer.t3 windings=2 bus=d kv=4.16\n"
+    )
+    reg, t2, t3 = dss.parse_transformers(text)
+    assert reg.phases == 3
+    assert [(w.bus, w.nodes, w.kv) for w in reg.windings] == [("a-bx", (1, 2, 3), 25.0), ("a", (1, 2, 3), 25.0)]
+    assert reg.kva == 20000.0
+    assert [(w.bus, w.nodes, w.kv) for w in t2.windings] == [("c", (3,), 14.434), ("clv", (1, 2), 0.24)]
+    # no phases given; bus and kv before any wdg belong to winding 1; two windings by default
+    assert t3.phases is None
+    assert [(w.bus, w.nodes, w.kv) for w in t3.windings] == [("d", (), 4.16), ("", (), None)]

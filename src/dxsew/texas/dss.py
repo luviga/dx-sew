@@ -139,6 +139,12 @@ KM_PER_UNIT = {
 KV_VALUE = re.compile(r"\bkv\s*=\s*([0-9.eE+-]+)", flags=re.IGNORECASE)
 KVS_VALUES = re.compile(r"\bkvs\s*=\s*[\[(\"']([^\])\"']*)", flags=re.IGNORECASE)
 NUMBER = re.compile(r"[0-9.eE+-]+")
+# One property of a transformer line, in order: a name, "=", and a value that
+# is a bracketed or quoted array (OpenDSS accepts [], (), "" and '') or one
+# blank-free word.
+TRANSFORMER_PROPERTY = re.compile(
+    r"([A-Za-z%][\w%]*)\s*=\s*(\[[^\]]*\]|\([^)]*\)|\"[^\"]*\"|'[^']*'|[^\s\[(\"']\S*)"
+)
 
 
 @dataclass(frozen=True)
@@ -151,14 +157,86 @@ class Line:
 
 
 @dataclass(frozen=True)
+class Winding:
+    bus: str
+    nodes: tuple[int, ...]
+    kv: float | None
+
+
+@dataclass(frozen=True)
 class Transformer:
     name: str
     kva: float | None
     kvs: tuple[float, ...]
+    phases: int | None = None
+    windings: tuple[Winding, ...] = ()
 
 
 def _bus(value: str) -> str:
     return value.split(".", 1)[0].lower()
+
+
+def _nodes(value: str) -> tuple[int, ...]:
+    """Node numbers of a bus name: ``p1lv.1.0`` gives (1, 0); none gives ()."""
+    found = []
+    for part in value.split(".")[1:]:
+        try:
+            found.append(int(part))
+        except ValueError:
+            continue
+    return tuple(found)
+
+
+def _array(value: str) -> list[str]:
+    """Items of an OpenDSS array value, brackets or quotes removed, split on commas or blanks."""
+    inner = value.strip()
+    if inner[:1] in "[(\"'" and inner[-1:] in "])\"'":
+        inner = inner[1:-1]
+    return [item for item in re.split(r"[\s,]+", inner) if item]
+
+
+def _windings(row: str) -> tuple[int | None, tuple[Winding, ...]]:
+    """Phases and windings of one ``New Transformer.`` line.
+
+    Both OpenDSS forms are read (https://opendss.epri.com/Properties16.html):
+    ``buses=[...]`` with ``kvs=(...)``, one item per winding, and blocks of
+    ``wdg=<n>`` followed by ``bus=`` and ``kv=`` of winding n. ``bus`` and
+    ``kv`` before any ``wdg`` belong to winding 1, the active winding of a new
+    transformer. The winding count is the largest of ``windings`` (2 when not
+    given, the OpenDSS default), the highest ``wdg`` and the length of
+    ``buses`` and ``kvs``. A winding the line gives no bus has bus "" and no
+    nodes; one it gives no voltage has ``kv`` None.
+    """
+    phases = None
+    declared = 2
+    active = 1
+    buses: dict[int, str] = {}
+    kvs: dict[int, float] = {}
+    for name, value in TRANSFORMER_PROPERTY.findall(row):
+        name = name.lower()
+        try:
+            if name == "phases":
+                phases = int(float(value))
+            elif name == "windings":
+                declared = int(float(value))
+            elif name == "wdg":
+                active = int(float(value))
+            elif name == "bus":
+                buses[active] = value
+            elif name == "kv":
+                kvs[active] = float(value)
+            elif name == "buses":
+                buses.update({index: item for index, item in enumerate(_array(value), start=1)})
+            elif name == "kvs":
+                kvs.update({index: float(item) for index, item in enumerate(_array(value), start=1)})
+        except ValueError:
+            continue
+    count = max([declared, *buses, *kvs])
+    windings = tuple(
+        Winding(bus=_bus(buses.get(index, "")), nodes=_nodes(buses.get(index, "")), kv=kvs.get(index))
+        for index in range(1, count + 1)
+    )
+    return phases, windings
 
 
 def parse_lines(text: str) -> list[Line]:
@@ -204,6 +282,9 @@ def parse_transformers(text: str) -> list[Transformer]:
 
     ``kva`` is the rating as in ``parse_transformer_kva`` (None when the line
     gives none); ``kvs`` holds every ``kv`` value and every value of ``kvs``.
+    ``phases`` is the ``phases`` value (None when not given) and ``windings``
+    holds each winding's bus (without nodes), node list and ``kv``
+    (``_windings``).
     """
     found: list[Transformer] = []
     for row in text.splitlines():
@@ -214,11 +295,14 @@ def parse_transformers(text: str) -> list[Transformer]:
         kvs = [float(value) for value in KV_VALUE.findall(row)]
         for group in KVS_VALUES.findall(row):
             kvs.extend(float(value) for value in NUMBER.findall(group))
+        phases, windings = _windings(row)
         found.append(
             Transformer(
                 name=parts[1].split(".", 1)[1],
                 kva=ratings[0] if ratings else None,
                 kvs=tuple(kvs),
+                phases=phases,
+                windings=windings,
             )
         )
     return found
