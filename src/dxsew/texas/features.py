@@ -38,7 +38,8 @@ From ``Lines.dss`` (empty when the feeder has no such file)
     ``graph_parts`` (connected parts of the line graph). The line graph has
     one edge per line and one edge of 0 km per regulator, between the buses
     of its first two windings.
-From the feeder ``Transformers.dss`` (empty when the feeder has no such file)
+From the feeder ``Transformers.dss`` (a feeder with no such file has no
+transformer, ``groups.missing_transformers_file``, and counts 0)
     A transformer with a winding under ``groups.regulator_max_low_kv`` is a
     service transformer; any other is a regulator.
     ``service_transformers`` (service transformers of the file);
@@ -46,8 +47,9 @@ From the feeder ``Transformers.dss`` (empty when the feeder has no such file)
     service transformers' ratings, ``dss.parse_transformer_kva``);
     ``primary_kv`` (``primary_kv``: the largest line-to-line voltage of the
     service transformers' highest-voltage windings, rounded to
-    ``groups.primary_kv_decimals``); ``kva_per_kw`` (``service_kva`` over
-    ``load_kw``).
+    ``groups.primary_kv_decimals``; when no service transformer gives a
+    voltage, ``name_kv`` as written, ``groups.primary_kv_fallback``);
+    ``kva_per_kw`` (``service_kva`` over ``load_kw``).
 From the substation name
     ``name_kv`` (``name_kv``: the voltage of ``groups.name_kv`` for the last
     part of the substation name; empty for any other last part).
@@ -227,10 +229,22 @@ def line_to_line_kv(transformer: dss.Transformer) -> float | None:
     return top.kv
 
 
-def primary_kv(transformers: list[dss.Transformer], decimals: int) -> float:
-    """Largest ``line_to_line_kv`` over the transformers given, rounded; NaN when none has one."""
+def primary_kv(transformers: list[dss.Transformer], decimals: int, fallback: float = math.nan) -> float:
+    """Largest ``line_to_line_kv`` over the transformers given, rounded; ``fallback`` when none has one."""
     values = [value for value in map(line_to_line_kv, transformers) if value is not None]
-    return round(max(values), decimals) if values else math.nan
+    return round(max(values), decimals) if values else fallback
+
+
+MISSING_TRANSFORMERS_FILE = ("no_transformers",)
+PRIMARY_KV_FALLBACK = ("name_kv",)
+
+
+def check_settings(task: dict) -> None:
+    """Raise on a value of ``groups.missing_transformers_file`` or ``groups.primary_kv_fallback`` not known."""
+    if task["missing_transformers_file"] not in MISSING_TRANSFORMERS_FILE:
+        raise ValueError(f"unknown missing_transformers_file {task['missing_transformers_file']!r}")
+    if task["primary_kv_fallback"] not in PRIMARY_KV_FALLBACK:
+        raise ValueError(f"unknown primary_kv_fallback {task['primary_kv_fallback']!r}")
 
 
 def name_kv(substation: str, table: dict) -> float:
@@ -246,8 +260,9 @@ def _read(path: str) -> str:
 
 
 def read_feeder(task: dict) -> dict:
-    """Features of one feeder; ``task`` holds the identity, the file paths and the unit default."""
-    loads = dss.parse_loads(_read(task["loads"]))
+    """Features of one feeder; ``task`` holds the identity, the file paths and the settings."""
+    check_settings(task)
+    loads =dss.parse_loads(_read(task["loads"]))
     sectors = [dss.load_sector(load.yearly) for load in loads]
     res = [load for load, sector in zip(loads, sectors) if sector == "res"]
     com = [load for load, sector in zip(loads, sectors) if sector == "com"]
@@ -288,16 +303,19 @@ def read_feeder(task: dict) -> dict:
             extent_km=span,
             graph_parts=parts,
         )
-    if task["transformers"]:
-        ratings = [transformer.kva for transformer in service if transformer.kva is not None]
-        service_kva = float(sum(ratings))
-        row.update(
-            service_transformers=len(service),
-            regulators=len(regulators),
-            service_kva=service_kva,
-            primary_kv=primary_kv(service, task["primary_kv_decimals"]),
-            kva_per_kw=service_kva / load_kw if load_kw else math.nan,
-        )
+    # A feeder without Transformers.dss has no transformer
+    # (groups.missing_transformers_file_assumption), so its lists are empty and
+    # its transformer columns count 0. With no service transformer giving a
+    # voltage, primary_kv is name_kv (groups.primary_kv_fallback_assumption).
+    ratings = [transformer.kva for transformer in service if transformer.kva is not None]
+    service_kva = float(sum(ratings))
+    row.update(
+        service_transformers=len(service),
+        regulators=len(regulators),
+        service_kva=service_kva,
+        primary_kv=primary_kv(service, task["primary_kv_decimals"], row["name_kv"]),
+        kva_per_kw=service_kva / load_kw if load_kw else math.nan,
+    )
     row.update(
         no_res=row["res_customers"] == 0,
         no_com=row["com_customers"] == 0,
@@ -406,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         task["default_unit"] = rule["line_units_default"]
         task["regulator_max_low_kv"] = float(rule["regulator_max_low_kv"])
         task["primary_kv_decimals"] = int(rule["primary_kv_decimals"])
+        task["missing_transformers_file"] = rule["missing_transformers_file"]
+        task["primary_kv_fallback"] = rule["primary_kv_fallback"]
         task["name_kv"] = {str(key): float(value) for key, value in rule["name_kv"].items()}
         for name, key in zip(network_names, ("lines", "transformers")):
             if task[key] is None:

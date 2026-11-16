@@ -3,6 +3,7 @@
 import math
 
 import pandas as pd
+import pytest
 
 from dxsew.texas import dss, features
 
@@ -35,6 +36,8 @@ def task(folder, loads, lines=None, transformers=None):
         "regulator_max_low_kv": 1.0,
         "primary_kv_decimals": 3,
         "name_kv": {"1247": 12.47, "25": 25.0, "4": 4.0},
+        "missing_transformers_file": "no_transformers",
+        "primary_kv_fallback": "name_kv",
     }
 
 
@@ -96,9 +99,15 @@ def test_transformer_features(tmp_path):
 
 
 def test_missing_network_files_leave_their_features_empty(tmp_path):
+    # no Lines.dss: line columns empty; no Transformers.dss: no transformer
     row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2)))
-    for column in features.LINE_COLUMNS + features.TRANSFORMER_COLUMNS:
+    for column in features.LINE_COLUMNS:
         assert math.isnan(row[column])
+    assert row["service_transformers"] == 0
+    assert row["regulators"] == 0
+    assert row["service_kva"] == 0.0
+    assert row["kva_per_kw"] == 0.0
+    assert row["primary_kv"] == row["name_kv"] == 12.47
     assert row["runnable_alone"]
 
 
@@ -229,10 +238,35 @@ def test_primary_kv_three_phase_is_line_to_line_and_regulators_do_not_count(tmp_
 
 
 def test_primary_kv_is_empty_without_a_service_transformer(tmp_path):
+    # a regulator only: no service transformer gives a voltage, so primary_kv is name_kv
     transformers = REGULATOR.format(n="1", a="a", b="b")
     row = features.read_feeder(task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=transformers))
     assert row["service_transformers"] == 0 and row["regulators"] == 1
-    assert math.isnan(row["primary_kv"])
+    assert row["primary_kv"] == row["name_kv"] == 12.47
+
+
+def test_primary_kv_stays_empty_without_a_service_transformer_or_a_name_kv(tmp_path):
+    for transformers in (None, REGULATOR.format(n="1", a="a", b="b")):
+        given = task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=transformers)
+        given["substation"] = "p9uhs1_69"
+        row = features.read_feeder(given)
+        assert math.isnan(row["name_kv"])
+        assert math.isnan(row["primary_kv"])
+
+
+def test_primary_kv_two_decimals_give_one_spelling_per_system_voltage(tmp_path):
+    for kv, expected in ((7.2, 12.47), (2.309, 4.0), (14.434, 25.0)):
+        given = task(tmp_path, res("r", 1, 1) + com("c", 3, 2), transformers=SERVICE_1PH.format(b="x", node="1", kv=kv))
+        given["primary_kv_decimals"] = 2
+        assert features.read_feeder(given)["primary_kv"] == expected
+
+
+def test_unknown_values_of_the_new_settings_raise(tmp_path):
+    for key in ("missing_transformers_file", "primary_kv_fallback"):
+        given = task(tmp_path, res("r", 1, 1) + com("c", 3, 2))
+        given[key] = "something_else"
+        with pytest.raises(ValueError, match=key):
+            features.read_feeder(given)
 
 
 def test_name_kv_reads_the_last_part_of_the_substation_name():

@@ -172,8 +172,18 @@ groups:
   # docs/groups.md (OpenDSS kv property, https://opendss.epri.com/Properties16.html).
   primary_kv_rule: "line_to_line"
   primary_kv_rule_assumption: "ASSUMPTION: a single-phase transformer between one phase and neutral is rated line to neutral."
-  primary_kv_decimals: 3
-  primary_kv_decimals_assumption: "ASSUMPTION: three decimals keep the precision of the winding voltages the release writes and drop the float noise of the square root."
+  primary_kv_decimals: 2
+  primary_kv_decimals_assumption: "ASSUMPTION: system voltages are named to two decimals (12.47 kV), so a voltage computed from a line-to-neutral rating and one written line to line give the same value."
+  # A feeder with no service transformer that gives a voltage takes name_kv
+  # (below) as its primary_kv, as written; when name_kv is empty too,
+  # primary_kv stays empty and the feeder is left out of grouping.
+  primary_kv_fallback: "name_kv"
+  primary_kv_fallback_assumption: "ASSUMPTION: a feeder with no service transformer serves its customers at primary voltage, and the system voltage written in its substation name is that voltage."
+  # A feeder folder without Transformers.dss: its transformer columns count 0
+  # (service_transformers, regulators, service_kva, kva_per_kw). The feeder is
+  # still listed in missing_network_files_<stamp>.csv.
+  missing_transformers_file: "no_transformers"
+  missing_transformers_file_assumption: "ASSUMPTION: a feeder folder of the release with no Transformers.dss has no transformer of its own; its customers connect at primary voltage."
   # name_kv: the voltage written as the last part of a substation name, after
   # the last underscore. A last part not listed here leaves name_kv empty.
   name_kv:
