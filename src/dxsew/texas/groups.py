@@ -39,11 +39,21 @@ and the settings block ``groups`` of ``configs/texas_sample.yaml``.
    group's centre to it. The three are empty for a group with its own typical
    feeder, and for every group of a stratum and k where no group has a
    typical feeder (such cases are listed).
+7. Dial, per target of ``groups.dial_targets`` and stratum: ``k_target``, the
+   smallest k whose ``explained`` reaches the target (or the largest k);
+   ``k_ceiling``, the smallest k whose largest group holds no more than
+   ``groups.max_frame_customer_share`` of the customers of all strata (1 when
+   the setting is null, the largest k when no k meets it); ``k``, the larger
+   of the two.
+8. Chosen dial: with ``groups.dial_choice`` set (one of the targets), every
+   group at the dial's k for that target, with the feeder to run: its typical
+   feeder, or its placeholder feeder when it has none.
 
 Writes, under ``<data_root>/texas/``: ``groups_<stamp>.parquet`` (stratum, k,
 feeder, group), ``group_table_<stamp>.csv``, ``explained_<stamp>.csv``,
-``dial_<stamp>.csv`` (with the groups that use a placeholder and their
-customer share), ``small_groups_<stamp>.csv`` and, with
+``dial_<stamp>.csv`` (with the groups that use a placeholder, their
+customer share and the ceiling columns), ``small_groups_<stamp>.csv``, with
+``groups.dial_choice`` set ``typical_feeders_<stamp>.csv`` and, with
 ``--sample-stamp``, ``check_set_candidates_<stamp>.csv``.
 """
 
@@ -270,37 +280,72 @@ def small_groups(table: pd.DataFrame, shares: list[float]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def dial(explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float]) -> pd.DataFrame:
-    """Smallest k reaching each target per stratum (or the cap), and typical feeders in total.
+def check_ceiling(ceiling: float | None) -> None:
+    """A ceiling is None or a share above 0 and at most 1."""
+    if ceiling is None:
+        return
+    if isinstance(ceiling, bool) or not isinstance(ceiling, (int, float)) or not 0 < ceiling <= 1:
+        raise ValueError(f"max_frame_customer_share must be null or above 0 and at most 1, not {ceiling!r}")
 
-    ``placeholder_groups`` counts the groups at that k that use a placeholder
-    and ``placeholder_customer_share`` is their customers over the stratum's
-    (in the row ``all``, over the customers of every stratum).
+
+def dial(
+    explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float], ceiling: float | None = None
+) -> pd.DataFrame:
+    """Per target and stratum, the number of groups k of the dial (module note, step 7).
+
+    ``k_target`` is the smallest k reaching the target (or the largest k when
+    none does); ``k_ceiling`` the smallest k whose largest group holds no more
+    than ``ceiling`` of the customers of every stratum (1 when ``ceiling`` is
+    None, the largest k when no k meets it); ``k`` the larger of the two, at
+    which every other column is read. ``placeholder_groups`` counts the
+    groups at that k that use a placeholder and ``placeholder_customer_share``
+    is their customers over the stratum's (in the row ``all``, over the
+    customers of every stratum). ``largest_frame_share`` is the largest
+    group's customers over the customers of every stratum.
     """
+    check_ceiling(ceiling)
     typical = table.dropna(subset=["typical_feeder"]).groupby(["stratum", "k"]).size()
     uses = table["placeholder_feeder"].notna()
     placeholder_count = table[uses].groupby(["stratum", "k"]).size()
     placeholder_customers = table[uses].groupby(["stratum", "k"])["customers"].sum()
     all_customers = table.groupby(["stratum", "k"])["customers"].sum()
+    largest = table.groupby(["stratum", "k"])["customers"].max()
+    total = float(table.loc[table["k"] == 1, "customers"].sum())
+
+    def frame_share(stratum: str, k: int) -> float:
+        value = largest.get((stratum, k))
+        return float(value) / total if value is not None and total > 0 else float("nan")
+
     rows = []
     for target in targets:
         chosen = []
         for stratum, part in explained_table.groupby("stratum", sort=True):
             part = part.sort_values("k")
+            ks = [int(k) for k in part["k"]]
             reached = part[part["explained"] >= target]
-            pick = reached.iloc[0] if len(reached) else part.iloc[-1]
-            k = int(pick["k"])
+            k_target = int(reached.iloc[0]["k"]) if len(reached) else ks[-1]
+            if ceiling is None:
+                k_ceiling, ceiling_reached = 1, True
+            else:
+                meeting = [k for k in ks if frame_share(stratum, k) <= ceiling]
+                k_ceiling, ceiling_reached = (meeting[0], True) if meeting else (ks[-1], False)
+            k = max(k_target, k_ceiling)
+            pick = part[part["k"] == k].iloc[0]
             chosen.append(
                 {
                     "target": target,
                     "stratum": stratum,
                     "k": k,
-                    "reached": bool(len(reached)),
+                    "reached": bool(pick["explained"] >= target),
                     "explained": float(pick["explained"]),
                     "typical_feeders": int(typical.get((stratum, k), 0)),
                     "placeholder_groups": int(placeholder_count.get((stratum, k), 0)),
                     "placeholder_customer_share": float(placeholder_customers.get((stratum, k), 0))
                     / float(all_customers[(stratum, k)]),
+                    "k_target": k_target,
+                    "k_ceiling": k_ceiling,
+                    "ceiling_reached": ceiling_reached,
+                    "largest_frame_share": frame_share(stratum, k),
                 }
             )
         rows.extend(chosen)
@@ -317,9 +362,45 @@ def dial(explained_table: pd.DataFrame, table: pd.DataFrame, targets: list[float
                     float(placeholder_customers.get((row["stratum"], row["k"]), 0)) for row in chosen
                 )
                 / sum(float(all_customers[(row["stratum"], row["k"])]) for row in chosen),
+                "k_target": sum(row["k_target"] for row in chosen),
+                "k_ceiling": None,
+                "ceiling_reached": all(row["ceiling_reached"] for row in chosen),
+                "largest_frame_share": max(
+                    (row["largest_frame_share"] for row in chosen if not np.isnan(row["largest_frame_share"])),
+                    default=float("nan"),
+                ),
             }
         )
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    out["k_ceiling"] = out["k_ceiling"].astype("Int64")
+    return out
+
+
+def typical_feeders(table: pd.DataFrame, dial_table: pd.DataFrame, target: float, features: pd.DataFrame) -> pd.DataFrame:
+    """One row per group of each stratum at the dial's k for ``target``, with the feeder to run.
+
+    ``run_feeder`` is the group's typical feeder, or its placeholder feeder
+    when it has none (``run_is_placeholder`` true); ``run_feeder_loads`` and
+    ``run_feeder_customers`` are that feeder's ``loads`` and ``customers``.
+    """
+    picks = dial_table[(dial_table["target"] == target) & (dial_table["stratum"] != "all")][["stratum", "k"]]
+    rows = table.merge(picks, on=["stratum", "k"], how="inner").sort_values(["stratum", "group"], kind="stable")
+    columns = [
+        "stratum", "k", "group", "feeders", "customers", "customer_share", "starting_weight",
+        "typical_feeder", "placeholder_group", "placeholder_feeder",
+    ]
+    rows = rows[columns].reset_index(drop=True)
+    rows["run_is_placeholder"] = rows["typical_feeder"].isna() & rows["placeholder_feeder"].notna()
+    rows["run_feeder"] = rows["typical_feeder"].where(rows["typical_feeder"].notna(), rows["placeholder_feeder"])
+    sizes = features[["feeder", "loads", "customers"]].rename(
+        columns={"feeder": "run_feeder", "loads": "run_feeder_loads", "customers": "run_feeder_customers"}
+    )
+    rows = rows.merge(sizes, on="run_feeder", how="left")
+    for column in ("run_feeder_loads", "run_feeder_customers"):
+        rows[column] = rows[column].astype("Int64")
+    return rows[
+        columns + ["run_feeder", "run_is_placeholder", "run_feeder_loads", "run_feeder_customers"]
+    ].reset_index(drop=True)
 
 
 def check_set_candidates(features: pd.DataFrame, sample: pd.DataFrame) -> pd.DataFrame:
@@ -358,6 +439,11 @@ def build(features: pd.DataFrame, rule: dict) -> dict:
         raise ValueError(f"unknown scaling {rule['scaling']!r}")
     if rule["starting_weight"] != "customer_share":
         raise ValueError(f"unknown starting weight {rule['starting_weight']!r}")
+    ceiling = rule.get("max_frame_customer_share")
+    check_ceiling(ceiling)
+    choice = rule.get("dial_choice")
+    if choice is not None and choice not in rule["dial_targets"]:
+        raise ValueError(f"dial_choice {choice!r} is not one of dial_targets {rule['dial_targets']!r}")
     features = features.sort_values("feeder", kind="stable").reset_index(drop=True)
     raw = feature_values(features, rule["features"])
     scaled = frame_z(raw)
@@ -381,17 +467,21 @@ def build(features: pd.DataFrame, rule: dict) -> dict:
     has_typical = table["typical_feeder"].notna().groupby([table["stratum"], table["k"]]).any()
     no_placeholder = table.groupby(["stratum", "k"]).size()[~has_typical].rename("groups").reset_index()
     explained_table = pd.concat(explained_parts, ignore_index=True)
-    return {
+    dial_table = dial(explained_table, table, rule["dial_targets"], ceiling)
+    result = {
         "groups": pd.concat(long_parts, ignore_index=True),
         "group_table": table,
         "explained": explained_table,
-        "dial": dial(explained_table, table, rule["dial_targets"]),
+        "dial": dial_table,
         "small_groups": small_groups(table, rule["small_share_report"]),
         "left_out": left_out.reset_index(drop=True),
         "no_placeholder": no_placeholder,
         "nested": nested,
         "scale": pd.DataFrame({"feature": names, "mean": raw.mean().to_numpy(), "std": raw.std(ddof=0).to_numpy()}),
     }
+    if choice is not None:
+        result["typical_feeders"] = typical_feeders(table, dial_table, choice, features)
+    return result
 
 
 def gates(result: dict, features: pd.DataFrame) -> dict[str, bool]:
@@ -440,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
     write_csv(result["explained"], out / f"explained_{args.stamp}.csv")
     write_csv(result["dial"], out / f"dial_{args.stamp}.csv")
     write_csv(result["small_groups"], out / f"small_groups_{args.stamp}.csv")
+    if "typical_feeders" in result:
+        write_csv(result["typical_feeders"], out / f"typical_feeders_{args.stamp}.csv")
     if args.sample_stamp:
         sample = pd.read_csv(out / f"sample_{args.sample_stamp}.csv")
         candidates = check_set_candidates(features, sample)
@@ -455,6 +547,14 @@ def main(argv: list[str] | None = None) -> int:
         print(left_out.groupby("stratum").size().to_string())
         print(left_out.to_string(index=False))
     print(result["dial"].to_string(index=False))
+    if "typical_feeders" in result:
+        chosen = result["typical_feeders"]
+        runs = chosen.dropna(subset=["run_feeder"]).drop_duplicates("run_feeder")
+        print(
+            f"chosen dial {rule['dial_choice']}: groups {len(chosen)}, "
+            f"placeholder groups {int(chosen['run_is_placeholder'].sum())}, "
+            f"distinct run feeders {len(runs)}, loads of the distinct run feeders {int(runs['run_feeder_loads'].sum())}"
+        )
     no_placeholder = result["no_placeholder"]
     print(f"strata and k with no typical feeder in any group, so no placeholder: {len(no_placeholder)}")
     if len(no_placeholder):
