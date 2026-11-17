@@ -262,7 +262,7 @@ def _read(path: str) -> str:
 def read_feeder(task: dict) -> dict:
     """Features of one feeder; ``task`` holds the identity, the file paths and the settings."""
     check_settings(task)
-    loads =dss.parse_loads(_read(task["loads"]))
+    loads = dss.parse_loads(_read(task["loads"]))
     sectors = [dss.load_sector(load.yearly) for load in loads]
     res = [load for load, sector in zip(loads, sectors) if sector == "res"]
     com = [load for load, sector in zip(loads, sectors) if sector == "com"]

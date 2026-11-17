@@ -119,9 +119,9 @@ sample:
   # --minutes-per-feeder of the sample CLI replaces these when given.
   minutes_per_feeder:
     - minutes: 17.88
-      label: "measured on one substation at the pin on Machine 3: three feeders, both seasons, three mixes (baseline, mixed, stress)"
+      label: "ASSUMPTION: 17.88 minutes of machine time per feeder for both seasons and three load mixes, for a feeder of about 700 loads on a desktop with 32 logical processors; run time grows with a feeder's loads, so the size table gives the order of the hours, not their value."
     - minutes: 5.96
-      label: "measured on one substation at the pin on Machine 3: the same run per feeder and per mix, one third of 17.88"
+      label: "ASSUMPTION: 5.96 minutes per feeder and load mix, one third of 17.88, for the same feeder and desktop."
 
 staging:
   # Folder under smart_ds_base (configs/local.yaml) that receives the sample.
@@ -203,6 +203,14 @@ groups:
   # Explained targets of the dial table.
   dial_targets: [0.5, 0.6, 0.7, 0.8, 0.9]
   dial_targets_assumption: "ASSUMPTION: targets from one half to nine tenths of the sum of squares show the cost in typical feeders of each step of fit."
+  # Largest share of the customers of all strata that one group may hold. The
+  # dial raises a stratum's number of groups until its largest group holds no
+  # more than this share; null turns the ceiling off.
+  max_frame_customer_share: 0.25
+  max_frame_customer_share_assumption: "ASSUMPTION: no group holds more than 25 % of the customers of all strata, so no single typical feeder, with its one draw of buildings, carries more than a quarter of the balancing area's residential and commercial load; a stratum's number of groups rises until its largest group is under this share, within the cap."
+  # Explained target whose groups are simulated; one of dial_targets.
+  dial_choice: 0.8
+  dial_choice_assumption: "ASSUMPTION: groups that account for 0.8 of the feature spread in each stratum, with the customer ceiling above, describe the feeders well enough for their curves to be simulated one typical feeder per group; a higher target adds feeders that differ little."
   # Starting weight of a group.
   starting_weight: "customer_share"
   starting_weight_assumption: "ASSUMPTION: a group starts at its share of the customers of its stratum; job J5 adjusts the weights against ERCOT, and the weights of a stratum sum to 1."

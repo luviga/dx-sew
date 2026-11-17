@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pandas as pd
+import pytest
 from scipy.cluster.hierarchy import linkage
 
 from dxsew.texas import groups
@@ -229,3 +230,115 @@ def test_every_group_without_a_typical_feeder_has_a_placeholder():
     runnable = set(table(ROWS).query("runnable_alone")["feeder"])
     assert set(group_table.loc[lonely, "placeholder_feeder"]) <= runnable
     assert result["no_placeholder"].empty
+
+
+def dial_inputs():
+    """Stratum A (one large group at k 1, split at k 2 and k 3) and a small stratum B."""
+    explained = pd.DataFrame(
+        {"stratum": ["A"] * 3 + ["B"] * 2, "k": [1, 2, 3, 1, 2], "explained": [0.0, 0.6, 0.9, 0.0, 0.4]}
+    )
+    group_table = pd.DataFrame(
+        {
+            "stratum": ["A"] + ["A"] * 2 + ["A"] * 3 + ["B"] + ["B"] * 2,
+            "k": [1, 2, 2, 3, 3, 3, 1, 2, 2],
+            "group": [1, 1, 2, 1, 2, 3, 1, 1, 2],
+            "customers": [80, 60, 20, 30, 30, 20, 20, 10, 10],
+            "typical_feeder": ["a", "a", "b", "a", "c", "b", "d", "d", "e"],
+            "placeholder_feeder": [None] * 9,
+        }
+    )
+    return explained, group_table
+
+
+def test_ceiling_raises_k_of_a_stratum_whose_largest_group_is_over_it():
+    explained, group_table = dial_inputs()
+    out = groups.dial(explained, group_table, [0.5], ceiling=0.35).set_index("stratum")
+    # A: target 0.5 gives k 2, whose largest group holds 60 of 100; k 3 holds 30 of 100
+    assert (out.loc["A", "k_target"], out.loc["A", "k_ceiling"], out.loc["A", "k"]) == (2, 3, 3)
+    assert out.loc["A", "explained"] == 0.9 and out.loc["A", "typical_feeders"] == 3
+    assert math.isclose(out.loc["A", "largest_frame_share"], 0.3)
+    # B holds 20 of 100 at k 1, under the ceiling, so it keeps its target k
+    assert (out.loc["B", "k_target"], out.loc["B", "k_ceiling"], out.loc["B", "k"]) == (2, 1, 2)
+    assert math.isclose(out.loc["B", "largest_frame_share"], 0.1)
+    assert out["ceiling_reached"].all()
+    assert (out.loc["all", "k"], out.loc["all", "k_target"]) == (5, 4)
+    assert pd.isna(out.loc["all", "k_ceiling"])
+    assert math.isclose(out.loc["all", "largest_frame_share"], 0.3)
+
+
+def test_no_ceiling_gives_the_target_table():
+    explained, group_table = dial_inputs()
+    out = groups.dial(explained, group_table, [0.5, 0.99])
+    plain = out[out["stratum"] != "all"]
+    assert (plain["k"] == plain["k_target"]).all() and (plain["k_ceiling"] == 1).all()
+    assert out["ceiling_reached"].all()
+    assert out.query("target == 0.5 and stratum == 'A'")["k"].item() == 2
+    assert out.query("target == 0.99 and stratum == 'all'")["k"].item() == 5
+
+
+def test_ceiling_no_k_meets_gives_the_largest_k():
+    explained, group_table = dial_inputs()
+    out = groups.dial(explained, group_table, [0.5], ceiling=0.05).set_index("stratum")
+    assert (out.loc["A", "k_ceiling"], out.loc["A", "k"], out.loc["A", "ceiling_reached"]) == (3, 3, False)
+    assert (out.loc["B", "k_ceiling"], out.loc["B", "k"], out.loc["B", "ceiling_reached"]) == (2, 2, False)
+    assert not out.loc["all", "ceiling_reached"]
+
+
+def test_a_bad_ceiling_raises():
+    explained, group_table = dial_inputs()
+    for bad in (0, -0.1, 1.5, "0.25"):
+        with pytest.raises(ValueError):
+            groups.dial(explained, group_table, [0.5], ceiling=bad)
+        with pytest.raises(ValueError):
+            groups.build(table(ROWS), {**RULE, "max_frame_customer_share": bad})
+    groups.dial(explained, group_table, [0.5], ceiling=1)
+
+
+def test_chosen_dial_lists_the_feeders_to_run_with_a_placeholder():
+    group_table = pd.DataFrame(
+        {
+            "stratum": ["A", "A", "A", "B"],
+            "k": [2, 2, 3, 1],
+            "group": [1, 2, 1, 1],
+            "feeders": [3, 1, 2, 2],
+            "customers": [30, 10, 20, 50],
+            "customer_share": [0.75, 0.25, 0.5, 1.0],
+            "starting_weight": [0.75, 0.25, 0.5, 1.0],
+            "typical_feeder": ["x", None, "x", "y"],
+            "placeholder_group": pd.array([pd.NA, 1, pd.NA, pd.NA], dtype="Int64"),
+            "placeholder_feeder": [None, "x", None, None],
+        }
+    )
+    dial_table = pd.DataFrame({"target": [0.8, 0.8, 0.8, 0.9], "stratum": ["A", "B", "all", "A"], "k": [2, 1, 3, 3]})
+    features = pd.DataFrame({"feeder": ["x", "y", "z"], "loads": [700, 90, 5], "customers": [300, 40, 2]})
+    out = groups.typical_feeders(group_table, dial_table, 0.8, features)
+    assert out["stratum"].tolist() == ["A", "A", "B"] and out["group"].tolist() == [1, 2, 1]
+    assert out["run_feeder"].tolist() == ["x", "x", "y"]
+    assert out["run_is_placeholder"].tolist() == [False, True, False]
+    assert out["run_feeder_loads"].tolist() == [700, 700, 90]
+    assert out["run_feeder_customers"].tolist() == [300, 300, 40]
+    assert out.groupby("stratum")["starting_weight"].sum().tolist() == [1.0, 1.0]
+
+
+def test_chosen_dial_from_build_and_a_choice_outside_the_targets_raises():
+    features = table(ROWS)
+    features["loads"] = 2 * features["customers"]
+    result = groups.build(features, {**RULE, "dial_choice": 0.5})
+    chosen = result["typical_feeders"]
+    assert (chosen["run_feeder_loads"] == 2 * chosen["run_feeder_customers"]).all()
+    picks = result["dial"].query("target == 0.5 and stratum != 'all'").set_index("stratum")["k"]
+    assert chosen.groupby("stratum").size().to_dict() == picks.to_dict()
+    assert chosen["run_feeder"].notna().all()
+    assert "typical_feeders" not in groups.build(table(ROWS), RULE)
+    with pytest.raises(ValueError):
+        groups.build(table(ROWS), {**RULE, "dial_choice": 0.7})
+
+
+def test_settings_ceiling_and_choice():
+    from dxsew.texas.config import load_sample_settings
+
+    rule = load_sample_settings()["groups"]
+    assert rule["max_frame_customer_share"] == 0.25
+    assert rule["dial_choice"] in rule["dial_targets"]
+    for name in ("max_frame_customer_share_assumption", "dial_choice_assumption"):
+        assert rule[name].startswith("ASSUMPTION: ")
