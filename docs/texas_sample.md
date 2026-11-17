@@ -225,3 +225,8 @@ Under `<data_root>/texas/`, with the stamp of the run:
 - The veto acts only where EIA-861 gives every utility of a county an answer. After the two lookups, a utility still blocks the veto of its county when it marks no RTO on any utility data row and has no balancing authority code on any sales or short form row, as for a delivery utility that files no sales row. Lookup 1 joins the marks of every other state's row of a utility, which for a utility active in several states may name RTOs that do not serve the county.
 - The climate zone and the county of a substation are those of the centroid of its load buses; a substation that spans two counties is counted in one.
 - Staged parquets carry new names, so a substation staged earlier under the release names no longer finds a parquet it shares with the current sample.
+- `name_map.csv` in the staging folder holds the names of the current sample only.
+- Staging downloads the released copy of a substation again when a copy under the release names does not match the listing.
+- Substations staged for an earlier sample stay on disk and can miss parquets that a later staging renamed.
+- A sample can draw substations with very few loads, which may not run as a coupling case.
+- Most rural substations of the release carry a substation transformer of the same rating, so the transformer check of rural feeders is coarse.

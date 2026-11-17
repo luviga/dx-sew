@@ -99,11 +99,34 @@ For each group at each k:
 
 Small groups are reported, never changed: for each stratum, k and share of `groups.small_share_report`, the number of groups under that customer share and the share of customers they hold.
 
-The dial table gives, for each explained target of `groups.dial_targets`, the smallest k per stratum that reaches it (or the cap, marked not reached), with the typical feeders at that k, the groups at that k that use a placeholder (`placeholder_groups`) and the share of the stratum's customers in those groups (`placeholder_customer_share`), and a row `all` with the sums over the strata (its share is over the customers of every stratum).
+The dial table gives, for each explained target of `groups.dial_targets` and each stratum, the number of groups k of the dial. Two rules give a k each, and the dial takes the larger:
+
+- `k_target`: the smallest k that reaches the target, or the largest k (the cap or the stratum's feeder count) when none does;
+- `k_ceiling`: the smallest k whose largest group holds no more than `groups.max_frame_customer_share` of the customers of all strata (the sum over the strata of their customers at k = 1). It is 1 when the setting is null, and the largest k when no k meets the ceiling.
+
+`reached`, `explained`, the typical feeders, the groups that use a placeholder (`placeholder_groups`) and the share of the stratum's customers in those groups (`placeholder_customer_share`) are read at the dial's k. Four columns follow: `k_target`, `k_ceiling`, `ceiling_reached` (true when some k meets the ceiling, or when the setting is null) and `largest_frame_share` (the largest group's customers over the customers of all strata, at the dial's k). The ceiling only raises k, so a stratum whose largest group is under the ceiling at its target k keeps that k; only a stratum holding a large part of all customers can be raised.
+
+A row `all` per target gives the sums over the strata of `k`, the typical feeders and `placeholder_groups`, and `placeholder_customer_share` over the customers of every stratum, as before; `k_target` is the sum over the strata, `k_ceiling` is empty, `ceiling_reached` is true only when it is true in every stratum, and `largest_frame_share` is the largest over the strata.
+
+## The chosen dial
+
+`groups.dial_choice` names the explained target whose groups are simulated; it must be one of `groups.dial_targets`, or `groups` stops. For that target, `typical_feeders_<stamp>.csv` holds one row per group of each stratum at the dial's k, with the group's size, customers, share and starting weight, its typical feeder and its placeholder columns. `run_feeder` is the feeder to simulate for the group: its typical feeder, or its placeholder feeder when it has none, which `run_is_placeholder` marks. `run_feeder_loads` and `run_feeder_customers` are that feeder's `loads` and `customers` in the feature table. One feeder can be the run feeder of several groups, since a placeholder borrows another group's typical feeder; it is simulated once. `groups` prints the number of groups, of placeholder groups and of distinct run feeders, and the sum of `loads` over the distinct run feeders. The starting weights of each stratum sum to 1.
 
 ## Check-set candidates
 
 Two staged substations run in full in the coupling as the check set (K60). For each substation of the sample, `case_runnable` is true when the substation as one case holds at least one residential and one commercial customer and no feeder has `shared_shapes` above 0.
+
+## Known limits
+
+- The customers of a feeder with no service transformer connect at medium voltage, and a group curve scaled by customers cannot stand for customers of that size.
+- A feeder folder without Transformers.dss is read as having no transformer of its own; neither the substation-level transformer file nor the feeder's Master.dss is read to confirm it.
+- The Ward tree of a large stratum can regroup many feeders when a few feeders are added or change.
+- Logged features still leave single feeders several standard deviations out, which makes very small groups.
+- A regulator whose two buses are already joined by a line path shortens `extent_km`, some regulator buses lie on no line, and lines with `switch=y` count as plain lines.
+- No circuit is compiled when the features are read, so nothing checks that a feeder solves.
+- The explained target can stay unreached at the cap in some strata.
+- A typical feeder run alone receives other buildings than it does inside its substation (problem log P3).
+- A placeholder stands in for a group whose feeders the coupling cannot run at its pin; its curve is that of another group's typical feeder.
 
 ## Settings
 
@@ -124,6 +147,8 @@ All in the block `groups` of `configs/texas_sample.yaml`.
 | `cap` | 40 | enough groups per stratum to see where adding groups stops paying |
 | `small_share_report` | 0.005, 0.01, 0.02 | shares that bracket a floor that may be set later; the report only counts |
 | `dial_targets` | 0.5, 0.6, 0.7, 0.8, 0.9 | targets that show the cost in typical feeders of each step of fit |
+| `max_frame_customer_share` | 0.25 | no group holds more than 25 % of the customers of all strata, so no single typical feeder, with its one draw of buildings, carries more than a quarter of the balancing area's residential and commercial load; a stratum's number of groups rises until its largest group is under this share, within the cap |
+| `dial_choice` | 0.8 | groups that account for 0.8 of the feature spread in each stratum, with the customer ceiling above, describe the feeders well enough for their curves to be simulated one typical feeder per group; a higher target adds feeders that differ little |
 | `starting_weight` | `customer_share` | a group starts at its share of the customers of its stratum; job J5 adjusts the weights against ERCOT |
 | `download_max_gb`, `download_min_free_gb` | 40, 150 | a plan over 40 GB means a wrong selection; 150 GB left free protects the jobs that share the machine |
 
@@ -136,8 +161,9 @@ All under `<data_root>/texas/`, named with the stamp of the run.
 - `groups_<stamp>.parquet`: `stratum`, `k`, `feeder`, `group`, one row per feeder in grouping and k.
 - `group_table_<stamp>.csv`: `stratum`, `k`, `group`, `feeders`, `customers`, `customer_share`, `starting_weight`, `flagged_customer_share`, `typical_feeder`, `typical_distance`, `nearest_feeder`, `nearest_distance`, `placeholder_group`, `placeholder_feeder`, `placeholder_distance`, and one `centre_<feature>` column per feature (`log(x)` written `log_x`).
 - `explained_<stamp>.csv`: `stratum`, `k`, `groups`, `explained`.
-- `dial_<stamp>.csv`: `target`, `stratum`, `k`, `reached`, `explained`, `typical_feeders`, `placeholder_groups`, `placeholder_customer_share`.
+- `dial_<stamp>.csv`: `target`, `stratum`, `k`, `reached`, `explained`, `typical_feeders`, `placeholder_groups`, `placeholder_customer_share`, `k_target`, `k_ceiling`, `ceiling_reached`, `largest_frame_share`.
 - `small_groups_<stamp>.csv`: `stratum`, `k`, `share_below`, `groups_below`, `customer_share_below`.
+- `typical_feeders_<stamp>.csv` (only with `groups.dial_choice` set): `stratum`, `k`, `group`, `feeders`, `customers`, `customer_share`, `starting_weight`, `typical_feeder`, `placeholder_group`, `placeholder_feeder`, `run_feeder`, `run_is_placeholder`, `run_feeder_loads`, `run_feeder_customers`.
 - `check_set_candidates_<stamp>.csv`: `subregion`, `substation`, `stratum`, `feeders`, `customers`, `res_customers`, `com_customers`, `feeders_no_res`, `feeders_no_com`, `feeders_with_shared_shapes`, `shared_shapes`, `shared_pairs_total`, `feeders_runnable_alone`, `case_runnable`.
 
-`groups` also prints the frame mean and standard deviation of each feature, the feeders left out of grouping, the dial table, the strata and k with no typical feeder in any group, and the gates: nesting, `explained` 0 at k = 1 and not falling, weights summing to 1, and one group per feeder at every k.
+`groups` also prints the frame mean and standard deviation of each feature, the feeders left out of grouping, the dial table, the counts of the chosen dial, the strata and k with no typical feeder in any group, and the gates: nesting, `explained` 0 at k = 1 and not falling, weights summing to 1, and one group per feeder at every k.
