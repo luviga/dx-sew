@@ -9,7 +9,7 @@ dx-sew builds its circuit results with DeltaE/dss-eulp-coupling (https://github.
 - `repository`: the coupling repository URL;
 - `commit`: the full commit hash dx-sew runs.
 
-It is the one tracked file of dx-sew that holds a commit hash.
+It is where dx-sew pins the coupling. `docs/problem_log.csv` cites the same commit inside the permalinks of its `where` column.
 
 The coupling clone is named by `coupling_repo` in `configs/local.yaml` (not tracked), and the interpreter that runs it by `coupling_python`. The coupling has its own environment, separate from dx-sew's, built from the clone's `requirements.txt`.
 

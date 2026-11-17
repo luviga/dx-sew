@@ -137,3 +137,76 @@ coupling:
   topology_state: "TX"
   donor_id: "TX"
   status: "ready"
+
+groups:
+  # Feature table of every frame feeder, nested groups per stratum, typical
+  # feeders and starting weights (decisions K60 and K61). Method note with
+  # every source: docs/groups.md.
+  # Files of a feeder folder read for the network features, matched without
+  # regard to case. Loads.dss is read too (frame.FEEDER_FILES).
+  feeder_network_files: ["lines.dss", "transformers.dss"]
+  # Unit of a line that names no unit (no units property, units=none, or a
+  # name OpenDSS does not list).
+  line_units_default: "km"
+  line_units_default_assumption: "ASSUMPTION: SMART-DS writes Units=km on its lines, so a line without a unit is read in km; such lines are counted in the column lines_without_units."
+  # Grouping features, in this order. log(x) is the natural log of x plus 1.
+  features:
+    - "log(customers)"
+    - "log(load_kw)"
+    - "log(kw_per_customer)"
+    - "com_kw_share"
+    - "log(line_km)"
+    - "log(extent_km)"
+    - "log(service_transformers)"
+    - "log(kva_per_kw)"
+    - "primary_kv"
+  features_assumption: "ASSUMPTION: size (customers, kW), load mix (kW per customer, commercial kW share), length (line km, extent) and equipment (service transformers, kVA per kW, primary voltage) describe a feeder well enough to group it; logs (of the value plus 1) keep the largest feeders from setting the scale alone, and kW per customer and kVA per kW are logged too because both have long tails that put single feeders tens of standard deviations out."
+  # Split of the feeder transformers: a transformer with a winding under this
+  # voltage (kV) is a service transformer; any other is a regulator.
+  regulator_max_low_kv: 1.0
+  regulator_max_low_kv_assumption: "ASSUMPTION: a service transformer has a winding under 1 kV; a transformer with no winding under this voltage is a voltage regulator or a primary-level transformer, not a service transformer."
+  # primary_kv: the system voltage line to line, the largest over the service
+  # transformers of the value of each one's highest-voltage winding; a
+  # single-phase transformer whose winding names one phase node is read line
+  # to neutral and multiplied by the square root of 3. Method note:
+  # docs/groups.md (OpenDSS kv property, https://opendss.epri.com/Properties16.html).
+  primary_kv_rule: "line_to_line"
+  primary_kv_rule_assumption: "ASSUMPTION: a single-phase transformer between one phase and neutral is rated line to neutral."
+  primary_kv_decimals: 2
+  primary_kv_decimals_assumption: "ASSUMPTION: system voltages are named to two decimals (12.47 kV), so a voltage computed from a line-to-neutral rating and one written line to line give the same value."
+  # A feeder with no service transformer that gives a voltage takes name_kv
+  # (below) as its primary_kv, as written; when name_kv is empty too,
+  # primary_kv stays empty and the feeder is left out of grouping.
+  primary_kv_fallback: "name_kv"
+  primary_kv_fallback_assumption: "ASSUMPTION: a feeder with no service transformer serves its customers at primary voltage, and the system voltage written in its substation name is that voltage."
+  # A feeder folder without Transformers.dss: its transformer columns count 0
+  # (service_transformers, regulators, service_kva, kva_per_kw). The feeder is
+  # still listed in missing_network_files_<stamp>.csv.
+  missing_transformers_file: "no_transformers"
+  missing_transformers_file_assumption: "ASSUMPTION: a feeder folder of the release with no Transformers.dss has no transformer of its own; its customers connect at primary voltage."
+  # name_kv: the voltage written as the last part of a substation name, after
+  # the last underscore. A last part not listed here leaves name_kv empty.
+  name_kv:
+    "1247": 12.47
+    "25": 25.0
+    "4": 4.0
+  name_kv_assumption: "ASSUMPTION: SMART-DS Texas substation names end in the system voltage line to line written without its decimal point (_1247 is 12.47 kV, _25 is 25 kV, _4 is 4 kV); the column is a check of primary_kv, not a grouping feature."
+  # Scaling of every feature before grouping.
+  scaling: "frame_z"
+  scaling_assumption: "ASSUMPTION: each feature becomes (value minus frame mean) over frame standard deviation (population, ddof 0), over every frame feeder that has the feature, so every feature has the same spread and a distance means the same in every stratum."
+  # Largest number of groups of a stratum (or its feeder count if smaller).
+  cap: 40
+  cap_assumption: "ASSUMPTION: 40 groups per stratum are enough to see where adding groups stops paying."
+  # Customer shares at which small groups are reported; nothing is changed.
+  small_share_report: [0.005, 0.01, 0.02]
+  small_share_report_assumption: "ASSUMPTION: shares of 0.5 %, 1 % and 2 % of a stratum's customers bracket a floor that may be set later; the report only counts."
+  # Explained targets of the dial table.
+  dial_targets: [0.5, 0.6, 0.7, 0.8, 0.9]
+  dial_targets_assumption: "ASSUMPTION: targets from one half to nine tenths of the sum of squares show the cost in typical feeders of each step of fit."
+  # Starting weight of a group.
+  starting_weight: "customer_share"
+  starting_weight_assumption: "ASSUMPTION: a group starts at its share of the customers of its stratum; job J5 adjusts the weights against ERCOT, and the weights of a stratum sum to 1."
+  # Guards of the download of the network files.
+  download_max_gb: 40
+  download_min_free_gb: 150
+  download_guard_assumption: "ASSUMPTION: the network files of the frame are a few GB; a plan over 40 GB means a wrong selection, and 150 GB left free on the data drive protects the jobs that share the machine."

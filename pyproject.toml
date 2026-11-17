@@ -12,6 +12,7 @@ dependencies = [
     "pyshp",
     "pyyaml",
     "requests",
+    "scipy>=1.18.1",
     "shapely",
 ]
 
