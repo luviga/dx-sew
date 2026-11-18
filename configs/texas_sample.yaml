@@ -218,3 +218,18 @@ groups:
   download_max_gb: 40
   download_min_free_gb: 150
   download_guard_assumption: "ASSUMPTION: the network files of the frame are a few GB; a plan over 40 GB means a wrong selection, and 150 GB left free on the data drive protects the jobs that share the machine."
+
+runs:
+  # Run feeders of the typical-feeder table, each run alone through the
+  # coupling (decisions K61, K69). Method note: docs/runs.md.
+  # Folder under smart_ds_base that receives the staged substations of the run
+  # feeders and their load parquets; the staging of the sample (staging.folder)
+  # is never written by the runs.
+  staging_folder: "dxsew_runs"
+  # Folder under smart_ds_base that holds one tree per run feeder with a copy of
+  # that feeder's staged folder only:
+  # <alone_folder>/<feeder>/<subregion>/<opendss_relpath>/<substation>/<feeder>/
+  alone_folder: "dxsew_alone"
+  # Coupling processes at once for phase 5b (schedule C of decision K69); the
+  # phases that download (pre to 5a) run one feeder at a time.
+  parallel: 4
