@@ -111,3 +111,49 @@ def test_echo_survives_a_console_without_the_character():
     stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
     coupling.echo("ok ✓ done\n", stream)
     assert raw.getvalue() == b"ok ? done\n"
+
+
+def test_command_runs_one_phase_when_given(tmp_path):
+    cmd = coupling.command(tmp_path / "c.yaml", tmp_path / "s", "py", ["summer"], phase="5b")
+    assert "--all" not in cmd
+    assert cmd[cmd.index("--phase") + 1] == "5b"
+    assert cmd[-2:] == ["--season", "summer"]
+    assert "--phase" not in coupling.command(tmp_path / "c.yaml", tmp_path / "s", "py", phase=None)
+    with pytest.raises(ValueError):
+        coupling.command(tmp_path / "c.yaml", tmp_path / "s", "py", phase=" ")
+
+
+def test_run_case_passes_the_phase(repo, tmp_path, capsys):
+    (repo / "run_case.py").write_text(
+        "import sys\nprint('phase', sys.argv[sys.argv.index('--phase') + 1] if '--phase' in sys.argv else 'all')\n",
+        encoding="utf-8",
+    )
+    git(repo, "commit", "-q", "-am", "phase")
+    (tmp_path / "case.yaml").write_text("case_id: x\n", encoding="utf-8")
+    pin = pin_of(repo)
+    assert coupling.run_case(tmp_path / "case.yaml", tmp_path, ["summer"], repo=repo, python=sys.executable,
+                             pin=pin, phase="pre") == 0
+    assert "phase pre" in capsys.readouterr().out
+    assert coupling.run_case(tmp_path / "case.yaml", tmp_path, repo=repo, python=sys.executable, pin=pin) == 0
+    assert "phase all" in capsys.readouterr().out
+
+
+def test_run_case_without_check_skips_both_pin_checks(repo, tmp_path, capsys):
+    pin = pin_of(repo)
+    (tmp_path / "case.yaml").write_text("case_id: x\n", encoding="utf-8")
+    (repo / "left_by_another_run.txt").write_text("x\n", encoding="utf-8")
+    assert coupling.run_case(tmp_path / "case.yaml", tmp_path, ["summer"], repo=repo, python=sys.executable,
+                             pin=pin, check=False) == 0
+    assert "case True" in capsys.readouterr().out
+    with pytest.raises(coupling.PinError):
+        coupling.run_case(tmp_path / "case.yaml", tmp_path, ["summer"], repo=repo, python=sys.executable, pin=pin)
+
+
+def test_command_line_takes_phase_and_no_check(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr(coupling, "read_local", lambda: {"coupling_repo": "r", "coupling_python": "p"})
+    monkeypatch.setattr(coupling, "run_case", lambda *a, **k: seen.update(k) or 0)
+    assert coupling.main(["--case", "c.yaml", "--settings", "s", "--phase", "5a", "--no-check"]) == 0
+    assert seen["phase"] == "5a" and seen["check"] is False
+    assert coupling.main(["--case", "c.yaml", "--settings", "s"]) == 0
+    assert seen["phase"] is None and seen["check"] is True
