@@ -1,9 +1,9 @@
 # Fit of the group weights to ERCOT's 2018 hourly load
 
-`dxsew.fit` fits one weight per fit column so that the weighted sum of the groups' hourly curves matches ERCOT's 2018 hourly fit target (decision K43): building profiles summed hour by hour, no power flow, weights fitted on three weeks of every month and energy, peak and daily range errors reported on the rest. Decision K71 (21 November 2026) replaced the fitted weights: the frame's load is corrected by two sector factors computed from EIA-861, nothing is fitted to the hourly curve, and the hourly curve becomes the test (section 7). The code is in `src/dxsew/fit.py` and its tests are in `tests/test_fit.py`.
+`dxsew.fit.weights` fits one weight per fit column so that the weighted sum of the groups' hourly curves matches ERCOT's 2018 hourly fit target (decision K43): building profiles summed hour by hour, no power flow, weights fitted on three weeks of every month and energy, peak and daily range errors reported on the rest. Decision K71 (21 November 2026) replaced the fitted weights: the frame's load is corrected by two sector factors computed from EIA-861, nothing is fitted to the hourly curve, and the hourly curve becomes the test (section 7). The code is in `dxsew/fit/weights.py` and its tests are in `tests/regression/test_fit.py`.
 
 ```
-uv run python -m dxsew.fit --stamp <stamp> --curves <feeder_curves.parquet> --typical <typical_feeders csv> \
+uv run python -m dxsew.fit.weights --stamp <stamp> --curves <feeder_curves.parquet> --typical <typical_feeders csv> \
     --target <fit target parquet> --stratum-curves <stratum_curves.parquet> --features <features parquet> \
     --eia861 <EIA-861 zip> [--target-summary <fit target summary json>] [--out-root <folder>]
 ```
@@ -66,7 +66,7 @@ From `stratum_curves.parquet`, at starting weights: `R(t)` is the sum over the s
 
 For each sector `k` (homes `res`, businesses `com`):
 
-- `S_k`: EIA-861 sales to ultimate customers of the year, MWh, in the target's state and balancing authority, Bundled and Energy rows (residential for homes, commercial for businesses; workbook `Sales_Ult_Cust_<year>.xlsx`, sheet States, measure Sales; the URL is `eia861_<year>` in `configs/sources.yaml`). Delivery rows are dropped as in [fit_target.md](fit_target.md); the totals with them are reported beside.
+- `S_k`: EIA-861 sales to ultimate customers of the year, MWh, in the target's state and balancing authority, Bundled and Energy rows (residential for homes, commercial for businesses; workbook `Sales_Ult_Cust_<year>.xlsx`, sheet States, measure Sales; the URL is `eia861_<year>` in `config/sources.yaml`). Delivery rows are dropped as in [fit_target.md](fit_target.md); the totals with them are reported beside.
 - `N_eia_k`: EIA-861 customers of the same rows (measure Customers, unit Count, under the same class header).
 - `E_k`: the frame's annual energy of sector `k` at starting weights, MWh: the sum of all 15-minute points of `R` or `B` (35,040 for a full year) times 0.25 h, divided by 1,000. The full year of points is used, so the year matches the calendar year of the sales.
 - `N_model_k`: customers of sector `k` implied by the starting model: the sum over the groups of `customers / run_feeder_customers` times the run feeder's own `res_customers` or `com_customers` in the features file.
@@ -87,7 +87,7 @@ ASSUMPTION: every home in ERCOT takes the same energy factor, {e_res} in 2018, a
 
 ASSUMPTION: EIA-861 residential sales and customers in ERCOT describe the homes that ResStock models, and commercial sales and customers the buildings that ComStock models.
 
-The run fills the placeholders with its computed values and writes the filled texts to `summary.json` under `sector.assumptions`. The templates sit in `src/dxsew/fit.py` beside the formulas (`ASSUMPTIONS`), because `dxsew.fit` reads no settings file.
+The run fills the placeholders with its computed values and writes the filled texts to `summary.json` under `sector.assumptions`. The templates sit in the block `fit` of `config/setups/ercot_2018.yaml` (key `assumptions`), beside the values they qualify.
 
 ### Models added
 

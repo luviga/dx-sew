@@ -22,7 +22,7 @@ UNIT = {
     "feeders": 3,
     "loads": 120,
 }
-# Keys of an entry of config/topology_registry.yaml of DeltaE/dss-eulp-coupling,
+# Keys of an entry of configs/topology_registry.yaml of DeltaE/dss-eulp-coupling,
 # with parquet_relpath, which run_case.py reads when present.
 COUPLING_KEYS = {
     "topology_state",

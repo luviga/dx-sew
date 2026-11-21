@@ -1,9 +1,9 @@
 # Running the typical feeders alone
 
-The typical-feeder table (`typical_feeders_<stamp>.csv`, see [groups.md](groups.md)) names one run feeder per group (decisions K61 and K62). `dxsew.texas.runs` prepares every distinct run feeder to run alone through DeltaE/dss-eulp-coupling (https://github.com/DeltaE/dss-eulp-coupling) at the pin, one case per feeder. The code is in `src/dxsew/texas/runs.py` and its tests are in `tests/texas/test_texas_runs.py`.
+The typical-feeder table (`typical_feeders_<stamp>.csv`, see [groups.md](groups.md)) names one run feeder per group (decisions K61 and K62). `dxsew.runs.cases` prepares every distinct run feeder to run alone through DeltaE/dss-eulp-coupling (https://github.com/DeltaE/dss-eulp-coupling) at the pin, one case per feeder. The code is in `dxsew/runs/cases.py` and its tests are in `tests/regression/test_runs.py`.
 
 ```
-uv run python -m dxsew.texas.runs --stamp <stamp> --typical <typical_feeders csv> --features <features parquet> \
+uv run python -m dxsew.runs.cases --stamp <stamp> --typical <typical_feeders csv> --features <features parquet> \
     --runs-root <absolute folder> --base-local <coupling local.yaml> --max-staging-gb <GB> --min-free-gb <GB>
 ```
 
@@ -11,7 +11,7 @@ uv run python -m dxsew.texas.runs --stamp <stamp> --typical <typical_feeders csv
 
 ## Settings
 
-The block `runs` of `configs/texas_sample.yaml`:
+The block `runs` of `config/setups/ercot_2018.yaml`:
 
 - `staging_folder` (`dxsew_runs`): folder under `smart_ds_base` that receives the staged substations of the run feeders and their load parquets;
 - `alone_folder` (`dxsew_alone`): folder under `smart_ds_base` that holds one tree per run feeder;
@@ -19,7 +19,7 @@ The block `runs` of `configs/texas_sample.yaml`:
 
 ## Steps
 
-1. **Staging.** The substations of the run feeders are staged with `stage.stage()` ([texas_sample.md](texas_sample.md), section on staging) with digit-only load shape names (K55) and renamed load parquets (K50). The function is given a copy of the settings whose `staging.folder` is `runs.staging_folder`, so the staged tree, the parquet folder and `name_map.csv` are new and the staging of the sample under `staging.folder` is never written. Before the staging, the released copies are placed and the released load parquets they use are downloaded in parallel into the new parquet folder under their released names; the staging then renames each in place. Both disk limits apply to every download. The outputs are `<staging>/name_map.csv` with its copy `<data_root>/texas/name_map_runs_<stamp>.csv`, the staging table `staging_runs_<stamp>.csv` and the checks table `checks_runs_<stamp>.csv`. A zone ending with no code in `configs/texas_zone_codes.csv` is added with `names.extend_zone_codes`, which keeps the codes already there, and the substations are staged again; the staging table records the endings added.
+1. **Staging.** The substations of the run feeders are staged with `stage.stage()` ([texas_sample.md](texas_sample.md), section on staging) with digit-only load shape names (K55) and renamed load parquets (K50). The function is given a copy of the settings whose `staging.folder` is `runs.staging_folder`, so the staged tree, the parquet folder and `name_map.csv` are new and the staging of the sample under `staging.folder` is never written. Before the staging, the released copies are placed and the released load parquets they use are downloaded in parallel into the new parquet folder under their released names; the staging then renames each in place. Both disk limits apply to every download. The outputs are `<staging>/name_map.csv` with its copy `<data_root>/texas/name_map_runs_<stamp>.csv`, the staging table `staging_runs_<stamp>.csv` and the checks table `checks_runs_<stamp>.csv`. A zone ending with no code in `inputs/smartds_zone_codes.csv` is added with `names.extend_zone_codes`, which keeps the codes already there, and the substations are staged again; the staging table records the endings added.
 2. **Alone trees.** Each run feeder gets a copy of its staged feeder folder only, at `<smart_ds_base>/<alone_folder>/<feeder>/<subregion>/base_timeseries/opendss/<substation>/<feeder>/`, each file checked by SHA-256 against the staged file. The feeder folder keeps its staged name `<substation>--<feeder>`. The coupling discovers the feeders of a case as the folders under its circuit root, so it finds that one feeder.
 3. **Settings folder** `<data_root>/texas/coupling_settings_runs_<stamp>/`, merged by `run_case.py --settings` over the coupling's own files (coupling README, "Settings from a caller"):
    - `local.yaml`: every key of the coupling `local.yaml` given, and `runs_root` set to the absolute folder given;
@@ -32,4 +32,4 @@ The block `runs` of `configs/texas_sample.yaml`:
 
 ## Running the cases
 
-Each case runs one phase at a time with `dxsew.coupling.run_case(case, settings, seasons, phase=<id>)` ([coupling.md](coupling.md)). The phases that download (`pre` to `5a`) run one feeder at a time: phase 5a of the coupling writes each building file under its final name and skips a name that exists, so two cases at once, or a failed download, can leave a partial file that later runs skip (problem log P7). Phase `5b` reads only, so it runs `runs.parallel` feeders at once, with `check=False` and the pin checked once before and once after the batch.
+Each case runs one phase at a time with `dxsew.runs.coupling.run_case(case, settings, seasons, phase=<id>)` ([coupling.md](coupling.md)). The phases that download (`pre` to `5a`) run one feeder at a time: phase 5a of the coupling writes each building file under its final name and skips a name that exists, so two cases at once, or a failed download, can leave a partial file that later runs skip (problem log P7). Phase `5b` reads only, so it runs `runs.parallel` feeders at once, with `check=False` and the pin checked once before and once after the batch.

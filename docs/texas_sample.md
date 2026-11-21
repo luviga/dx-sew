@@ -1,6 +1,6 @@
 # Stratified Texas sample of whole substations
 
-This note describes how dx-sew draws a stratified sample of whole SMART-DS substations in Texas, stages each sampled substation for the coupling with digit-only load shape names, and writes the coupling settings. The code is in `src/dxsew/texas/`, its settings are in `configs/texas_sample.yaml` and `configs/texas_zone_codes.csv`, and its tests are in `tests/texas/`. How dx-sew runs the coupling is in [coupling.md](coupling.md).
+This note describes how dx-sew draws a stratified sample of whole SMART-DS substations in Texas, stages each sampled substation for the coupling with digit-only load shape names, and writes the coupling settings. The code is in `dxsew/frame/`, `dxsew/sources/` and `dxsew/runs/`, its settings are in `config/setups/ercot_2018.yaml` and `inputs/smartds_zone_codes.csv`, and its tests are in `tests/regression/`. How dx-sew runs the coupling is in [coupling.md](coupling.md).
 
 Nothing the code produces is stored in the repository. Listings, source files, frames, samples, size tables, released copies, name maps and coupling settings are written under `data_root`; the staged circuits and parquets are written under `smart_ds_base`.
 
@@ -9,22 +9,22 @@ Nothing the code produces is stored in the repository. Listings, source files, f
 Run from the repository, in this order:
 
 ```
-uv run python -m dxsew.texas.sample --stamp <stamp> [--minutes-per-feeder <minutes>]
-uv run python -m dxsew.texas.trust --stamp <stamp> [--puct-counties <csv>]
-uv run python -m dxsew.texas.names
-uv run python -m dxsew.texas.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> [--previous-sample <csv>]
-uv run python -m dxsew.texas.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> --check-only
-uv run python -m dxsew.texas.settings --stamp <stamp> --runs-root <folder> --base-local <file> \
+uv run python -m dxsew.frame.sample --stamp <stamp> [--minutes-per-feeder <minutes>]
+uv run python -m dxsew.frame.trust --stamp <stamp> [--puct-counties <csv>]
+uv run python -m dxsew.sources.smartds_names
+uv run python -m dxsew.runs.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> [--previous-sample <csv>]
+uv run python -m dxsew.runs.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> --check-only
+uv run python -m dxsew.runs.settings --stamp <stamp> --runs-root <folder> --base-local <file> \
     [--extra-local <file> --extra-key <key>] --days <csv> [--substation <subregion>/<substation>]
 ```
 
 - `sample` lists the release (or reuses the saved listing), builds the frame, assigns the geography, applies the EIA-861 veto with its two lookups, writes the review list of vetoed counties and the list of looked-up utilities, draws the sample and writes the size table. `--stamp` sets the stamp of the output names (default: the current UTC time). Each value of `sample.minutes_per_feeder` in the settings adds one run-hours column to the size table; `--minutes-per-feeder`, which may be repeated, replaces them. `--refresh-listing` lists the release again.
 - `trust` runs the four trust checks of the balancing area map on the frame of a stamp (section "Trust checks of the map"). They report and change nothing. `--puct-counties` gives the county list of the Public Utility Commission of Texas as a CSV with the columns `county` and `status` (`served`, `partly` or `not served`); without it the second check does not run.
-- `names` writes `configs/texas_zone_codes.csv` from the saved listing, or extends it with endings it lacks. Codes already in the table keep their meaning.
+- `names` writes `inputs/smartds_zone_codes.csv` from the saved listing, or extends it with endings it lacks. Codes already in the table keep their meaning.
 - `stage` places the released copies, builds the staged tree with digit-only names, renames the parquets, writes the name map and runs the four checks. The two disk limits are arguments because they belong to the machine. `--previous-sample` names the sample CSV of an earlier staging; its substations that left the sample are listed, with the parquets they share with this one. `--check-only` runs the four checks again on the staged tree and changes nothing; it exits with 1 when a check fails.
 - `settings` writes the settings folder and the case files of the staged substations (section "Coupling settings").
 
-`configs/local.yaml` (not tracked) must define `data_root`, `smart_ds_base` and `eulp_metadata_root`; `coupling_repo` and `coupling_python` are read by `dxsew.coupling`.
+`config/local.yaml` (not tracked) must define `data_root`, `smart_ds_base` and `eulp_metadata_root`; `coupling_repo` and `coupling_python` are read by `dxsew.runs.coupling`.
 
 ## Sources
 
@@ -118,7 +118,7 @@ The frame is built in three steps: location on the balancing area map (decision 
 
 ### 5. Trust checks of the map
 
-The balancing area shapes are rough: EIA says that shapes derived from the same HIFLD control areas overlap, have gaps and are not strict boundaries (see Sources). Four checks, functions of `src/dxsew/texas/trust.py` with their own tests, set the map against other sources. None changes the frame and none has a pass mark; each writes a CSV with the stamp.
+The balancing area shapes are rough: EIA says that shapes derived from the same HIFLD control areas overlap, have gaps and are not strict boundaries (see Sources). Four checks, functions of `dxsew/frame/trust.py` with their own tests, set the map against other sources. None changes the frame and none has a pass mark; each writes a CSV with the stamp.
 
 1. Zone agreement (`trust_zone_agreement_<stamp>.csv`, `trust_zone_table_<stamp>.csv`). For each frame substation, the zone endings of the `yearly=` load shape names of the loads of its released `Loads.dss` files are counted, and the most common ending is kept (a tie goes to the first in sorted order). The polygon `ERCO-<code>` pairs with the ending of the zone code table whose word initials are `<code>`: `ERCO-C` Coast, `ERCO-E` East, `ERCO-FW` Far-West, `ERCO-N` North, `ERCO-NC` North-Central, `ERCO-S` South, `ERCO-SC` South-Central, `ERCO-W` West. Reported: the share of frame substations, and of their loads, whose polygon zone equals their most common ending; the share of loads whose own ending equals their polygon zone; a table of substations by most common ending (with "no ending") against polygon zone; and the largest disagreements by load count.
 2. PUCT county list (`trust_county_shares_<stamp>.csv`, and `trust_puct_counties_<stamp>.csv` when the list is given). For each Texas county, the share of its substations inside polygons of the prefix. With the PUCT status of each county, the check lists every county the PUCT marks served where fewer than half its substations are inside, and every county it marks not served where any substation is inside. A county marked partly served is reported and not listed.
@@ -133,7 +133,7 @@ For each sampled substation, `stage` places an untouched copy of its released `o
 
 Phase 7c of the coupling finds the building of a load by the digits of its load shape name and compares them as an integer with the `Yearly_Number` column of its building table, which `0_download_smartds/scan_feeders.py` fills with the third underscore field of the name. The release names carry a zone ending after the digits (`res_kw_9312-North_pu`), so that column reads as text and no row matches. Staging therefore gives every load shape a name of digits only.
 
-Name forms, each parsed with a pattern anchored at both ends (`src/dxsew/texas/names.py`):
+Name forms, each parsed with a pattern anchored at both ends (`dxsew/sources/smartds_names.py`):
 
 | Kind | Form | Example |
 |---|---|---|
@@ -146,7 +146,7 @@ Any token of a `.dss` file that starts with `res_` or `com_` (any case) looks li
 
 New name. The new number is the released digits followed by the two-digit code of the zone ending. With `North` coded `04`, `res_kw_9312-North_pu` becomes `res_kw_931204_pu` and its parquet `res_9312-North.parquet` becomes `res_931204.parquet`. The kw and kvar names of one building get the same number, because phase 7b finds the kvar profile by replacing `_kw_` with `_kvar_` in the kw name. The code has a fixed width, so two released names never get the same new number.
 
-Zone code table, `configs/texas_zone_codes.csv`, columns `zone_ending,code`:
+Zone code table, `inputs/smartds_zone_codes.csv`, columns `zone_ending,code`:
 
 - Codes are labels standing only for their zone ending. A code once committed never changes meaning, and a new ending takes the next free code.
 - The first version holds every distinct zone ending of the load-data parquets and profiles of the whole Full Texas 2018 release, sorted and coded `01`, `02` and onward. The empty ending, a name with no zone, has code `00`.
