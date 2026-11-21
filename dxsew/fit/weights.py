@@ -27,7 +27,11 @@ Fitted weights     w = argmin_{w >= 0} || X w - T ||^2 on the fit hours
                    used for weights (K71).
 
 Sector factors (K71). R(h) and B(h) are the frame's homes and businesses curves
-at starting weights (sums of the res: and com: end uses of stratum_curves.parquet).
+at starting weights: per stratum and point, R the sum of the res: end uses of
+stratum_curves.parquet other than those of the setup's fit.excluded_end_uses (the
+PV column, which the building total leaves out) and B the sum of the com: end uses;
+the rounding gap g = kw - (R + B) is shared in proportion, R' = R + g R / (R + B)
+and B' = B + g B / (R + B), so R' + B' = kw.
 For each sector k, from EIA-861 sales S_k and customers N_eia_k, the frame's annual
 energy E_k, and the customers N_model_k (starting model) and N_frame_k (frame):
   M_k = S_k / E_k, e_k = (S_k / N_eia_k) / (E_k / N_model_k),
@@ -290,24 +294,41 @@ def sector_columns(columns, sector: str) -> list[str]:
     return [c for c in columns if str(c).startswith(f"{sector}:")]
 
 
-def sector_curves(stratum: pd.DataFrame, tolerance: float | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def sector_curves(stratum: pd.DataFrame, tolerance: float | None = None,
+                  excluded: list[str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The frame's 15-minute homes and businesses curves at starting weights.
 
     ``stratum`` is ``stratum_curves.parquet`` of dxsew.curves.year (columns
     ``stratum``, ``timestamp``, ``kw``, ``res:<end use>``, ``com:<end use>``).
-    R(t) is the sum over strata of every ``res:`` column and B(t) the same for
-    ``com:``, in kW on the building files' own timestamps. Returns the curves
+    Per stratum and point, R is the sum of the ``res:`` columns other than
+    ``res:<end use>`` for each end use of ``excluded`` (the setup's
+    ``fit.excluded_end_uses`` by default) and B the sum of the ``com:`` columns.
+    The rounding gap g = kw - (R + B) is shared in proportion:
+    R' = R + g R / (R + B), B' = B + g B / (R + B), so R' + B' = kw; a point
+    with R + B = 0 stops the run. R(t) and B(t) are the sums of R' and B' over
+    strata, in kW on the building files' own timestamps. Returns the curves
     (index ``timestamp``; columns ``res``, ``com`` and ``kw``, the sum of the
-    strata's kw) and, per stratum, the largest gap |kw - (res sum + com sum)| in
-    kW and relative to kw, its timestamp, and the points over ``tolerance`` (the
-    setup's ``fit.end_use_tolerance`` by default).
+    strata's kw) and, per stratum, the largest gap |kw - (R' + B')| in kW and
+    relative to kw, its timestamp, the points over ``tolerance`` (the setup's
+    ``fit.end_use_tolerance`` by default), and the largest shared gap |g| / |kw|.
     """
-    tolerance = _fit()["end_use_tolerance"] if tolerance is None else tolerance
-    res = stratum[sector_columns(stratum.columns, "res")].astype(float).sum(axis=1)
+    rule = _fit() if tolerance is None or excluded is None else {}
+    tolerance = rule["end_use_tolerance"] if tolerance is None else tolerance
+    excluded = rule["excluded_end_uses"] if excluded is None else excluded
+    left_out = {f"res:{name}" for name in excluded}
+    res = stratum[[c for c in sector_columns(stratum.columns, "res") if c not in left_out]].astype(float).sum(axis=1)
     com = stratum[sector_columns(stratum.columns, "com")].astype(float).sum(axis=1)
     kw = stratum["kw"].astype(float)
+    both = res + com
+    if (both == 0).any():
+        where = stratum.loc[both == 0, ["stratum", "timestamp"]].iloc[0]
+        raise ZeroDivisionError(f"R + B is 0 in stratum {where['stratum']} at {where['timestamp']}; "
+                                "the rounding gap cannot be shared")
+    gap = kw - both
+    shared = (gap / kw.abs()).abs()
+    res, com = res + gap * res / both, com + gap * com / both
     table = pd.DataFrame({"stratum": stratum["stratum"], "timestamp": stratum["timestamp"],
-                          "res": res, "com": com, "kw": kw})
+                          "res": res, "com": com, "kw": kw, "shared_rel": shared})
     table["gap_kw"] = (kw - (res + com)).abs()
     table["gap_rel"] = table["gap_kw"] / kw.abs()
     checks = []
@@ -316,7 +337,8 @@ def sector_curves(stratum: pd.DataFrame, tolerance: float | None = None) -> tupl
         checks.append({"stratum": name, "points": len(part), "max_gap_kw": float(part["gap_kw"].max()),
                        "max_gap_rel": float(part.at[worst, "gap_rel"]),
                        "max_gap_rel_timestamp": part.at[worst, "timestamp"],
-                       "points_over_tolerance": int((part["gap_rel"] > tolerance).sum())})
+                       "points_over_tolerance": int((part["gap_rel"] > tolerance).sum()),
+                       "max_shared_gap_rel": float(part["shared_rel"].max())})
     curves = table.groupby("timestamp", sort=True)[["res", "com", "kw"]].sum()
     return curves, pd.DataFrame(checks)
 
@@ -414,7 +436,7 @@ def sector_model(stratum: pd.DataFrame, typical: pd.DataFrame, features: pd.Data
     """
     rule = _fit()
     texts_key = load_runtime()["names"]["texts_key"]
-    curves, checks = sector_curves(stratum, rule["end_use_tolerance"])
+    curves, checks = sector_curves(stratum, rule["end_use_tolerance"], rule["excluded_end_uses"])
     hourly = sector_hourly(curves, hours)
     energy = sector_energy_mwh(curves)
     counts = sector_customers(typical, features)
@@ -511,6 +533,8 @@ def run(curves: pd.DataFrame, typical: pd.DataFrame, target: pd.DataFrame, secto
             "s_res": s_res, "s_com": s_com, "a": a, "b": b,
             texts_key: sector_out[texts_key],
             "check_end_uses": {
+                "excluded_end_uses": list(rule["excluded_end_uses"]),
+                "max_shared_gap_rel": float(checks["max_shared_gap_rel"].max()),
                 "tolerance": rule["end_use_tolerance"],
                 "max_gap_rel": float(checks.at[worst, "max_gap_rel"]),
                 "max_gap_rel_stratum": checks.at[worst, "stratum"],

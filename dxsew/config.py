@@ -60,7 +60,8 @@ SETUP_KEYS = {
                "timestamp_source", "timestamp_convention"},
     "fit_target": {"balancing_area", "year", "state", "classes_kept", "classes_removed", "standard_utc_offset_hours",
                    "prevailing_time_zone", "max_interpolated_gap_hours", "consistency_band", "published"},
-    "fit": {"last_fit_day", "end_use_tolerance", "starting_tolerance", "product_tolerance", "sources"},
+    "fit": {"last_fit_day", "end_use_tolerance", "starting_tolerance", "product_tolerance", "excluded_end_uses",
+            "sources"},
     "trust": {"edge_km", "puct_served_share"},
     "veto_report": {"eia861", "counties", "map", "output_folder", "share_threshold", "share_decimals"},
 }

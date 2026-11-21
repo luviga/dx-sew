@@ -158,6 +158,7 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 | `last_fit_day` | Days 1 to this of each month are fit hours, the rest test hours |
 | `end_use_tolerance`, `starting_tolerance` | Tolerances of the two checks of the sector split |
 | `product_tolerance` | Tolerance of the check e x m x c = M |
+| `excluded_end_uses` | End uses of the homes curve left out of its sum (the PV column); the rounding gap left is shared in proportion between homes and businesses |
 | `assumptions` | The three ASSUMPTION texts of K71 the run fills |
 | `sources` | Source texts of E, N_model and N_frame, written to the outputs |
 

@@ -215,20 +215,61 @@ def test_sector_curves_split_and_end_use_check():
     stamps = pd.date_range("2018-01-01 00:15", periods=8, freq="15min")
     one = np.arange(1.0, 9.0)
     stratum = _stratum_table(stamps, {"A": (100 * one, -one, 50 * one), "B": (10 * one, 0 * one, 30 * one)})
-    curves, checks = fit.sector_curves(stratum)
-    np.testing.assert_allclose(curves["res"], 110 * one - one)
+    # The building total leaves PV out: kw is the sum of the other end uses.
+    stratum["kw"] = stratum["res:cooling"] + stratum["com:cooling"]
+    curves, checks = fit.sector_curves(stratum, excluded=["pv"])
+    np.testing.assert_allclose(curves["res"], 110 * one)
     np.testing.assert_allclose(curves["com"], 80 * one)
     np.testing.assert_allclose(curves["kw"], curves["res"] + curves["com"])
     assert checks["max_gap_rel"].max() == pytest.approx(0.0, abs=1e-15)
+    assert checks["max_shared_gap_rel"].max() == pytest.approx(0.0, abs=1e-15)
     assert checks["points_over_tolerance"].sum() == 0
-    # kw 0.5 % above the end uses in one point of stratum B: the check reports it.
+    # kw 0.5 % above the end uses in one point of stratum B: the gap is shared and reported.
     stratum.loc[(stratum["stratum"] == "B") & (stratum["timestamp"] == stamps[3]), "kw"] *= 1.005
-    _, checks = fit.sector_curves(stratum)
+    _, checks = fit.sector_curves(stratum, excluded=["pv"])
     b = checks.set_index("stratum").loc["B"]
-    assert b["max_gap_rel"] == pytest.approx(0.005 / 1.005)
-    assert b["max_gap_rel_timestamp"] == stamps[3]
-    assert b["points_over_tolerance"] == 1
-    assert checks.set_index("stratum").loc["A", "points_over_tolerance"] == 0
+    assert b["max_gap_rel"] <= 1e-12
+    assert b["max_shared_gap_rel"] == pytest.approx(0.005 / 1.005)
+    assert b["points_over_tolerance"] == 0
+    assert checks.set_index("stratum").loc["A", "max_shared_gap_rel"] == pytest.approx(0.0, abs=1e-15)
+
+
+def test_sector_curves_leave_out_the_excluded_end_uses():
+    stamps = pd.date_range("2018-01-01 00:15", periods=4, freq="15min")
+    one = np.arange(1.0, 5.0)
+    stratum = _stratum_table(stamps, {"A": (100 * one, -10 * one, 50 * one)})
+    stratum["kw"] = 150 * one
+    without, _ = fit.sector_curves(stratum, excluded=["pv"])
+    np.testing.assert_allclose(without["res"], 100 * one)
+    # Summed in, the PV column leaves a gap of 10 kW per unit, shared 90 to 50.
+    within, checks = fit.sector_curves(stratum, excluded=[])
+    np.testing.assert_allclose(within["res"], 90 * one + 10 * one * 90 / 140)
+    np.testing.assert_allclose(within["com"], 50 * one + 10 * one * 50 / 140)
+    assert checks["max_shared_gap_rel"].max() == pytest.approx(10 / 150)
+    # The setup leaves PV out.
+    assert load_setup()["fit"]["excluded_end_uses"] == ["pv"]
+    default, _ = fit.sector_curves(stratum)
+    np.testing.assert_allclose(default["res"], without["res"])
+
+
+def test_sector_curves_share_the_rounding_gap_in_proportion():
+    stamps = pd.date_range("2018-01-01 00:15", periods=3, freq="15min")
+    stratum = pd.DataFrame({"stratum": "A", "timestamp": stamps, "kw": [101.0, 99.0, 200.0],
+                            "res:cooling": [60.0, 30.0, 0.0], "com:cooling": [40.0, 70.0, 200.0]})
+    curves, checks = fit.sector_curves(stratum, excluded=["pv"])
+    np.testing.assert_allclose(curves["res"], [60.6, 29.7, 0.0])
+    np.testing.assert_allclose(curves["com"], [40.4, 69.3, 200.0])
+    assert (curves["res"] / (curves["res"] + curves["com"])).tolist() == pytest.approx([0.6, 0.3, 0.0])
+    assert ((curves["kw"] - (curves["res"] + curves["com"])).abs() / curves["kw"]).max() <= 1e-12
+    assert checks.at[0, "max_shared_gap_rel"] == pytest.approx(1 / 99)
+
+
+def test_sector_curves_stop_where_the_end_uses_add_to_zero():
+    stamps = pd.date_range("2018-01-01 00:15", periods=2, freq="15min")
+    stratum = pd.DataFrame({"stratum": "A", "timestamp": stamps, "kw": [5.0, 1.0],
+                            "res:cooling": [3.0, 0.0], "com:cooling": [2.0, 0.0]})
+    with pytest.raises(ZeroDivisionError, match="R \\+ B is 0"):
+        fit.sector_curves(stratum, excluded=["pv"])
 
 
 def test_sector_hourly_uses_the_cst_rule():

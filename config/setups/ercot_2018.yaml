@@ -395,6 +395,14 @@ fit:
   starting_tolerance: 1.0e-4
   tolerances_assumption: "ASSUMPTION: tolerances of the two checks of the sector split, set by the hub for K71: the end uses of a stratum add to its kw within 0.1 % in every 15-minute point, and the hourly sector curves add to the starting model within 1e-4."
   product_tolerance: 1.0e-12
+  # End uses of the homes curve R left out of its sum: the rooftop PV column,
+  # "Energy produced by rooftop PV systems. Negative value for any power
+  # produced" (ResStock 2024 release 2 AMY2018 data dictionary, line 212,
+  # https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_amy2018_release_2/data_dictionary.tsv ;
+  # the building total, line 216, is "Total electricity consumed", and net,
+  # line 206, "subtracts any power produced by PV or generators").
+  excluded_end_uses: ["pv"]
+  excluded_end_uses_assumption: "ASSUMPTION: the building total out.electricity.total.energy_consumption leaves rooftop PV out, so the PV column is not summed into the homes curve. The data dictionary does not say so for the total; the values show it: on stratum_curves.parquet the year sum of kw less the res: and com: end uses grows by the PV total when PV is summed in, and the end uses without PV add to kw within the rounding of the residential files. The rounding gap that remains is shared between homes and businesses in proportion to their curves."
   product_tolerance_assumption: "ASSUMPTION: relative tolerance of the check e * m * c = M (rounding only)."
   # The three ASSUMPTION texts of K71, beside the formulas they qualify. The run fills
   # the placeholders with the computed values and writes the filled texts to
