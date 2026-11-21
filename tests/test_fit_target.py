@@ -23,8 +23,9 @@ def _sales_zip(tmp_path):
         names += ["Thousand Dollars", "Megawatthours", "Count"]
 
     def row(service, part, state, ba, r, c, i, t):
+        # Customers: one per 10 MWh of each class (made up), so each count is known.
         return [2018, 1, "U", part, service, "O", state, "Investor Owned", ba,
-                0, r, 0, 0, c, 0, 0, i, 0, 0, t, 0, 0, r + c + i + t, 0]
+                0, r, r // 10, 0, c, c // 10, 0, i, i // 10, 0, t, t // 10, 0, r + c + i + t, 0]
 
     rows = [
         top, mid, names,
@@ -54,6 +55,32 @@ def test_delivery_rows_dropped_bundled_and_energy_kept(tmp_path):
     assert table.loc["transportation", "mwh"] == 1
     assert table.loc["residential", "mwh_with_delivery"] == 120
     assert table.loc["industrial", "mwh_with_delivery"] == 6
+
+
+def test_customers_by_class_delivery_rows_dropped(tmp_path):
+    zip_path = _sales_zip(tmp_path)
+    with zipfile.ZipFile(zip_path) as z:
+        raw = pd.read_excel(io.BytesIO(z.read("Sales_Ult_Cust_2018.xlsx")), sheet_name="States", header=None)
+    raw.iat[3, 11] = "."  # residential customers of the first row published as "."
+    xlsx = io.BytesIO()
+    raw.to_excel(xlsx, sheet_name="States", header=False, index=False)
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("Sales_Ult_Cust_2018.xlsx", xlsx.getvalue())
+    sales = eia861.read_sales(zip_path, 2018)
+    assert {f"{c}_customers" for c in eia861.CLASSES} <= set(sales.columns)
+    assert "total_customers" not in sales.columns
+    assert pd.isna(sales.loc[0, "residential_customers"])
+    table = eia861.customers_by_class(sales, "TX", "ERCO")
+    # Bundled 100 -> "." (missing), Energy 10 -> 1, Delivery 10 -> 1; commercial 5 + 0 (+ 0).
+    assert table.loc["residential", "customers"] == 1
+    assert table.loc["residential", "customers_with_delivery"] == 2
+    assert table.loc["commercial", "customers"] == 5
+    assert table.loc["industrial", "customers"] == 3
+    assert table.loc["industrial", "customers_with_delivery"] == 3
+    # Sales are unchanged by the customers columns.
+    by_class = eia861.sales_by_class(sales, "TX", "ERCO")
+    assert by_class.loc["residential", "mwh"] == 110
+    assert by_class.loc["commercial", "mwh_with_delivery"] == 60
 
 
 def test_loss_share_from_three_numbers():

@@ -197,3 +197,137 @@ def test_run_end_to_end():
                                           "fitted_mw", "fa", "fb"}
     assert out["summary"]["fit_hours"] == 24
     assert out["summary"]["test_hours"] == 23
+
+
+# Sector factors (K71).
+
+def _stratum_table(stamps, parts):
+    """Long stratum table: parts is {stratum: (res1, res2, com1)} arrays in kW; kw is their sum."""
+    rows = []
+    for name, (r1, r2, c1) in parts.items():
+        rows.append(pd.DataFrame({"stratum": name, "timestamp": stamps, "kw": r1 + r2 + c1,
+                                  "com:cooling": c1, "res:cooling": r1, "res:pv": r2}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_sector_curves_split_and_end_use_check():
+    stamps = pd.date_range("2018-01-01 00:15", periods=8, freq="15min")
+    one = np.arange(1.0, 9.0)
+    stratum = _stratum_table(stamps, {"A": (100 * one, -one, 50 * one), "B": (10 * one, 0 * one, 30 * one)})
+    curves, checks = fit.sector_curves(stratum)
+    np.testing.assert_allclose(curves["res"], 110 * one - one)
+    np.testing.assert_allclose(curves["com"], 80 * one)
+    np.testing.assert_allclose(curves["kw"], curves["res"] + curves["com"])
+    assert checks["max_gap_rel"].max() == pytest.approx(0.0, abs=1e-15)
+    assert checks["points_over_tolerance"].sum() == 0
+    # kw 0.5 % above the end uses in one point of stratum B: the check reports it.
+    stratum.loc[(stratum["stratum"] == "B") & (stratum["timestamp"] == stamps[3]), "kw"] *= 1.005
+    _, checks = fit.sector_curves(stratum)
+    b = checks.set_index("stratum").loc["B"]
+    assert b["max_gap_rel"] == pytest.approx(0.005 / 1.005)
+    assert b["max_gap_rel_timestamp"] == stamps[3]
+    assert b["points_over_tolerance"] == 1
+    assert checks.set_index("stratum").loc["A", "points_over_tolerance"] == 0
+
+
+def test_sector_hourly_uses_the_cst_rule():
+    stamps = pd.date_range("2018-01-01 01:15", "2018-01-01 03:00", freq="15min")
+    curves = pd.DataFrame({"res": 1000.0 * np.arange(8), "com": 2000.0}, index=stamps)
+    hours = pd.DatetimeIndex(["2018-01-01 00:00", "2018-01-01 01:00", "2018-01-01 02:00"])
+    mw = fit.sector_hourly(curves, hours)
+    # CST hour ending 01:00 takes EST points 01:15 to 02:00 (positions 0 to 3); 00:00 has no points.
+    assert list(mw.index) == list(hours[1:])
+    np.testing.assert_allclose(mw["res"], [1.5, 5.5])
+    np.testing.assert_allclose(mw["com"], [2.0, 2.0])
+
+
+def test_sector_energy_and_customers():
+    curves = pd.DataFrame({"res": [1000.0] * 4, "com": [4000.0] * 4})
+    assert fit.sector_energy_mwh(curves) == pytest.approx({"res": 1.0, "com": 4.0})
+    typical = pd.DataFrame({"customers": [30, 10, 6], "run_feeder_customers": [10, 10, 3],
+                            "run_feeder": ["f1", "f1", "f2"]})
+    features = pd.DataFrame({"feeder": ["f1", "f2", "f3"], "res_customers": [8, 1, 100], "com_customers": [2, 2, 7]})
+    counts = fit.sector_customers(typical, features)
+    # Groups: factors 3 and 1 on f1 (8 homes, 2 businesses), factor 2 on f2 (1 home, 2 businesses).
+    assert counts["N_model"] == pytest.approx({"res": 4 * 8 + 2 * 1, "com": 4 * 2 + 2 * 2})
+    assert counts["N_frame"] == {"res": 109.0, "com": 11.0}
+    assert counts["frame_feeders"] == 3
+    with pytest.raises(KeyError):
+        fit.sector_customers(typical.assign(run_feeder=["f1", "f1", "f9"]), features)
+
+
+def test_sector_factors_and_product():
+    f = fit.sector_factors(S=120.0, N_eia=12.0, E=100.0, N_model=8.0, N_frame=10.0)
+    assert f["M"] == pytest.approx(1.2)
+    assert f["e"] == pytest.approx((120 / 12) / (100 / 8))
+    assert f["m"] == pytest.approx(10 / 8)
+    assert f["c"] == pytest.approx(12 / 10)
+    assert f["e"] * f["m"] * f["c"] == pytest.approx(f["M"], rel=1e-12)
+    assert f["product_gap"] <= fit.PRODUCT_TOLERANCE
+
+
+def test_report_only_fits_known_answers():
+    rng = np.random.default_rng(11)
+    r = rng.uniform(10, 20, 300)
+    b = rng.uniform(5, 30, 300)
+    assert fit.fit_sector_scales(r, b, 1.3 * r + 0.7 * b) == pytest.approx((1.3, 0.7), rel=1e-9)
+    s_res, s_com = fit.fit_sector_scales(r, b, 2.0 * r - 0.5 * b)
+    assert min(s_res, s_com) >= 0.0
+    assert fit.fit_scale_plus_constant(r, 1.1 * r + 50.0) == pytest.approx((1.1, 50.0), rel=1e-9)
+
+
+def test_run_with_sectors_end_to_end():
+    est = pd.date_range("2018-01-21 00:15", "2018-01-23 00:00", freq="15min")
+    rng = np.random.default_rng(5)
+    a = rng.uniform(1000, 3000, len(est))
+    b = rng.uniform(500, 1500, len(est))
+    curves = pd.concat([pd.DataFrame({"feeder": "fa", "timestamp": est, "kw": a}),
+                        pd.DataFrame({"feeder": "fb", "timestamp": est, "kw": b})], ignore_index=True)
+    typical = pd.DataFrame({
+        "stratum": ["S", "S", "T"], "group": [1, 2, 1], "customers": [10, 10, 4],
+        "starting_weight": [0.5, 0.5, 1.0], "run_feeder": ["fa", "fa", "fb"],
+        "run_feeder_customers": [10, 10, 2], "run_is_placeholder": [False, True, False],
+    })
+    # Stratum curves at starting weights: S = 2 fa (60 % homes), T = 2 fb (30 % homes).
+    stratum = _stratum_table(est, {"S": (1.2 * a, 0 * a, 0.8 * a), "T": (0.6 * b, 0 * b, 1.4 * b)})
+    features = pd.DataFrame({"feeder": ["fa", "fb", "fz"], "res_customers": [8, 1, 5], "com_customers": [2, 1, 0]})
+    eia = {"mwh": {"residential": 900.0, "commercial": 1100.0},
+           "mwh_with_delivery": {"residential": 900.0, "commercial": 1100.0},
+           "customers": {"residential": 40.0, "commercial": 9.0},
+           "customers_with_delivery": {"residential": 40.0, "commercial": 9.0}, "rows_by_service_type": {}}
+    sources = {"eia861": "u", "E": "e", "N_model": "n", "N_frame": "f"}
+    cst = pd.date_range("2018-01-21 01:00", "2018-01-23 00:00", freq="h", tz="Etc/GMT+6")
+    mw, _ = fit.hourly_curves(curves, cst.tz_localize(None))
+    y = 1.4 * mw["fa"] + 2.5 * mw["fb"] + 3.0
+    target = pd.DataFrame({"utc_hour_ending": cst.tz_convert("UTC"), "cst_hour_ending": cst,
+                           "target_mw": y.reindex(cst.tz_localize(None)).to_numpy()})
+    plain = fit.run(curves, typical, target)
+    sector = {"stratum": stratum, "features": features, "eia": eia, "year": 2018, "sources": sources}
+    out = fit.run(curves, typical, target, sector)
+    # J5's outputs are unchanged by the sector models.
+    pd.testing.assert_frame_equal(out["hourly"][plain["hourly"].columns], plain["hourly"])
+    kept = out["errors"]["model"].isin(plain["errors"]["model"])
+    pd.testing.assert_frame_equal(out["errors"][kept].reset_index(drop=True), plain["errors"])
+    sec = out["summary"]["sector"]
+    assert sec["check_end_uses"]["max_gap_rel"] == pytest.approx(0.0, abs=1e-12)
+    assert sec["check_starting"]["max_gap_rel"] == pytest.approx(0.0, abs=1e-12)
+    assert sec["sector_formula_year_gap"] == pytest.approx(0.0, abs=1e-12)
+    # N_model: S groups factor 1 and 1 on fa (8, 2), T group factor 2 on fb (1, 1).
+    assert sec["N_model"] == pytest.approx({"res": 18.0, "com": 6.0})
+    assert sec["N_frame"] == {"res": 14.0, "com": 3.0}
+    h = out["hourly"]
+    np.testing.assert_allclose(h["res_mw"] + h["com_mw"], h["starting_mw"], rtol=1e-12)
+    factors = sec["factors"]
+    np.testing.assert_allclose(h["sector_formula_mw"],
+                               factors["res"]["M"] * h["res_mw"] + factors["com"]["M"] * h["com_mw"])
+    # a and b are the least squares of a X + b on the fit hours.
+    rows = (h["split"] == "fit").to_numpy()
+    design = np.column_stack([h.loc[rows, "starting_mw"], np.ones(rows.sum())])
+    want = np.linalg.lstsq(design, h.loc[rows, "target_mw"], rcond=None)[0]
+    assert (sec["a"], sec["b"]) == pytest.approx(tuple(want), rel=1e-9)
+    assert set(out["errors"]["model"]) == set(fit.MODELS)
+    assert set(out["months"]["model"]) == set(fit.MODELS)
+    table = out["sector_factors"].set_index("sector")
+    assert table.loc["res", "fitted_scale"] == pytest.approx(sec["s_res"])
+    assert "14 homes and 3 businesses against 40 residential and 9 commercial" in sec["assumptions"]["customer"]
+    assert "{:.4f}".format(factors["res"]["e"]) in sec["assumptions"]["energy_factor"]
