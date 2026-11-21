@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from dxsew.config import Paths
+from dxsew.config import Paths, load_runtime
 from dxsew.sources import oedi
 from dxsew.sources import smartds_dss as dss
 
@@ -48,9 +48,10 @@ def opendss_objects(listing: pd.DataFrame, settings: dict) -> pd.DataFrame:
     below = parts.str[1 + depth :]
     objects["subregion"] = parts.str[0]
     objects["substation"] = below.str[0]
-    objects["feeder"] = below.str[1].where(below.str.len() == 3, "")
+    depth_feeder, depth_substation = release["feeder_file_parts"], release["substation_file_parts"]
+    objects["feeder"] = below.str[1].where(below.str.len() == depth_feeder, "")
     objects["file"] = below.str[-1].str.lower()
-    objects = objects[below.str.len().isin([2, 3])]
+    objects = objects[below.str.len().isin([depth_substation, depth_feeder])]
     return objects[~objects["substation"].isin(release["not_substations"])].reset_index(drop=True)
 
 
@@ -176,7 +177,7 @@ def build_frame(
     tasks = substation_tasks(objects, paths)
     if processes > 1:
         with ProcessPoolExecutor(max_workers=processes) as pool:
-            outcomes = list(pool.map(read_substation, tasks, chunksize=16))
+            outcomes = list(pool.map(read_substation, tasks, chunksize=load_runtime()["chunksize"]["frame"]))
     else:
         outcomes = [read_substation(task) for task in tasks]
     rows = pd.DataFrame([row for row, _ in outcomes])

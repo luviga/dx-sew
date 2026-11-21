@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
+from dxsew.config import load_setup
 from dxsew.frame import ba_map as ba
 from dxsew.frame import trust
 
@@ -114,4 +115,4 @@ def test_edges():
     assert result["nearest_other_ba"].tolist() == ["OTHER", "OTHER", "OTHER"]
     assert result["km_to_other_ba"].iloc[2] == pytest.approx(0.11 * ba.KM_PER_DEGREE, rel=1e-3)
     assert result["near_edge"].tolist() == [False, False, True]
-    assert trust.EDGE_KM == 10.0
+    assert load_setup()["trust"]["edge_km"] == 10.0

@@ -3,7 +3,7 @@
 Source: the full data tables XLSX of the state profile, for Texas linked from
 https://www.eia.gov/electricity/state/texas/ (Full data tables). EIA computes the
 loss share as estimated losses divided by (total disposition minus direct use),
-https://www.eia.gov/tools/faqs/faq.php?id=105. The URL is in configs/sources.yaml
+https://www.eia.gov/tools/faqs/faq.php?id=105. The URL is in config/sources.yaml
 under eia_state_profile_<state in lower case>.
 """
 

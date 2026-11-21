@@ -1,15 +1,54 @@
-# Settings of the stratified Texas sample of whole SMART-DS substations.
-# Method note with every source: docs/texas_sample.md.
+# Setup ercot_2018: the ERCOT balancing area in 2018, built from the SMART-DS
+# v0.9 Full Texas release, EIA-861 2018, EIA-930 2018 and the EULP building
+# files. Every value the code uses for this area and year is here, next to its
+# source or its ASSUMPTION sentence. A key <key>_assumption holds the
+# ASSUMPTION sentence of <key> or of the step it names. Keys:
+# docs/configuration.md. Method notes: docs/texas_sample.md, docs/groups.md,
+# docs/curves.md, docs/fit_target.md, docs/fit.md.
+
+setup_id: "ercot_2018"
+# Name of the area in config/areas.yaml; the loader checks that the area's
+# rto, ba_code, ba_prefix and states agree with the keys of this file.
+area: "ERCOT"
+# Lower-case name of the area in output column and key names
+# (ercot_peak_on_day_mw of common_days.csv, ercot_published of the fit target
+# summary).
+label: "ercot"
+# Year of the release, the building files, EIA-861 and EIA-930.
+year: 2018
+# Folder under data_root (the workspace) that receives the outputs.
+output_folder: "texas"
+
+inputs:
+  # Two-digit code of each zone ending of the release's load shape names
+  # (decision K55), written by the rule of dxsew.sources.smartds_names (the
+  # endings of the release listing in sorted order, next free code; the empty
+  # ending is 00). Path from the project root.
+  zone_codes: "inputs/smartds_zone_codes.csv"
+  # State FIPS codes by postal code, the field STATEFP of the TIGER/Line
+  # county file. Source: U.S. Census Bureau, "State FIPS codes",
+  # https://www2.census.gov/geo/docs/reference/state.txt
+  state_fips: "inputs/state_fips.csv"
 
 release:
   # SMART-DS v0.9 Full Texas, year 2018, on the OEDI data lake (public bucket).
   # https://data.openei.org/s3_viewer?bucket=oedi-data-lake&prefix=SMART-DS%2Fv0.9%2F2018%2FFull_Texas%2F
   bucket_url: "https://oedi-data-lake.s3.amazonaws.com"
   prefix: "SMART-DS/v0.9/2018/Full_Texas/"
+  # Name of the release in the descriptions of the coupling's topology registry.
+  description: "SMART-DS v0.9 Full Texas"
   # Tree of one sub-region that holds one folder per substation.
   opendss_tree: "scenarios/base_timeseries/opendss"
   # Folders of that tree that are not substations.
   not_substations: ["subtransmission"]
+  # Parts of an object key below the substation level of the tree: a file of
+  # the substation folder is <substation>/<file>, a file of a feeder folder
+  # <substation>/<feeder>/<file> (the layout of the release listing).
+  substation_file_parts: 2
+  feeder_file_parts: 3
+  # Windings of an OpenDSS transformer that names none: 2, the OpenDSS
+  # default of the property windings, https://opendss.epri.com/Properties16.html
+  opendss_default_windings: 2
   # Folder of the load-data parquets, shared by all sub-regions.
   load_data_folder: "load_data"
   # Name of the saved listing under <data_root>/oedi.
@@ -21,6 +60,7 @@ geography:
     url: "https://www2.census.gov/geo/tiger/TIGER2018/COUNTY/tl_2018_us_county.zip"
     # State FIPS code of Texas, field STATEFP of the same file.
     state_fips: "48"
+    coordinates_assumption: "ASSUMPTION: the bus coordinates of the release are longitude and latitude in WGS84 degrees and are set against the NAD83 county boundaries with no datum shift. The release states no coordinate system. Positions in the two datums differ by up to about two metres in the United States (NOAA National Geodetic Survey, \"Improving the National Spatial Reference System\", https://www.ngs.noaa.gov/2010Summit/Improving_the_NSRS.pdf), far below the size of a county."
   balancing_area:
     # U.S. Energy Information Administration, Form EIA-861 detailed data, 2018.
     # Page: https://www.eia.gov/electricity/data/eia861/
@@ -59,7 +99,7 @@ geography:
     # A utility the lookups do not resolve stays unknown, and unknown never
     # removes. With veto_lookups: false the veto is K57 exactly. The same
     # procedure for any balancing area: docs/frame_procedure.md and
-    # configs/veto_areas.yaml.
+    # config/areas.yaml.
     veto_lookups: true
     # Balancing authority code of the area in the column BA Code of the
     # sales rows; the zip lists the codes in Balancing_Authority_2018.xlsx.
@@ -97,13 +137,32 @@ geography:
     # ERCOT polygons are ERCO-C, ERCO-E, ERCO-FW, ERCO-N, ERCO-NC, ERCO-S,
     # ERCO-SC and ERCO-W.
     ba_prefix: "ERCO"
+    coordinates_assumption: "ASSUMPTION (kept from the county assignment, ``geo.assign_counties``): the bus coordinates of the release are longitude and latitude in WGS84 degrees and are set against the NAD83 polygons of the map with no datum shift."
   climate_zone:
     # ResStock 2024 release 2 baseline metadata of Texas, placed by the user
-    # under eulp_metadata_root (configs/local.yaml).
+    # under eulp_metadata_root (config/local.yaml).
     # https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_tmy3_release_2/
     metadata_file: "Metadata_TX_Residential/TX_baseline_metadata_and_annual_results.csv"
     county_column: "in.county"
     zone_column: "in.building_america_climate_zone"
+
+eia861:
+  # Layout of the EIA-861 2018 detailed data files inside the zip of
+  # geography.balancing_area.url (https://www.eia.gov/electricity/data/eia861/).
+  # Year of the files; the veto lookups and the fit read the sales file of it.
+  year: 2018
+  # Sales to ultimate customers, sheet States: row 0 holds the class headers,
+  # row 1 the measures (Sales, Customers), row 2 the column names; the data
+  # start on the row after the names (first row is 0).
+  sales_file: "Sales_Ult_Cust_{year}.xlsx"
+  sales_sheet: "States"
+  sales_group_row: 0
+  sales_measure_row: 1
+  sales_names_row: 2
+  # Short form file and its sheet, read beside the sales file for the
+  # balancing authority code of the utilities that file the short form.
+  short_form_file: "Short_Form_{year}.xlsx"
+  short_form_sheet: "861S"
 
 sample:
   # Strata: kind of sub-region (U or R, the last letter of its name) crossed
@@ -124,7 +183,7 @@ sample:
       label: "ASSUMPTION: 5.96 minutes per feeder and load mix, one third of 17.88, for the same feeder and desktop."
 
 staging:
-  # Folder under smart_ds_base (configs/local.yaml) that receives the sample.
+  # Folder under smart_ds_base (config/local.yaml) that receives the sample.
   folder: "SMART-DS_v0.9_2018_Full_Texas"
   # Flat folder of the load-data parquets inside it.
   parquet_folder: "parquet_data"
@@ -149,6 +208,9 @@ groups:
   # name OpenDSS does not list).
   line_units_default: "km"
   line_units_default_assumption: "ASSUMPTION: SMART-DS writes Units=km on its lines, so a line without a unit is read in km; such lines are counted in the column lines_without_units."
+  # extent_km: longest shortest-path distance between two buses of the line
+  # graph, by two sweeps of Dijkstra's search in every connected part.
+  extent_km_assumption: "ASSUMPTION: exact on a radial feeder and a lower bound where loops exist"
   # Grouping features, in this order. log(x) is the natural log of x plus 1.
   features:
     - "log(customers)"
@@ -191,6 +253,9 @@ groups:
     "25": 25.0
     "4": 4.0
   name_kv_assumption: "ASSUMPTION: SMART-DS Texas substation names end in the system voltage line to line written without its decimal point (_1247 is 12.47 kV, _25 is 25 kV, _4 is 4 kV); the column is a check of primary_kv, not a grouping feature."
+  # Relative tolerance of the check that the feeders' kW of a substation add
+  # to the frame's kW (the loads and customers must be equal); a check only.
+  substation_check_rel_tolerance: 1.0e-6
   # Scaling of every feature before grouping.
   scaling: "frame_z"
   scaling_assumption: "ASSUMPTION: each feature becomes (value minus frame mean) over frame standard deviation (population, ddof 0), over every frame feeder that has the feature, so every feature has the same spread and a distance means the same in every stratum."
@@ -214,6 +279,12 @@ groups:
   # Starting weight of a group.
   starting_weight: "customer_share"
   starting_weight_assumption: "ASSUMPTION: a group starts at its share of the customers of its stratum; job J5 adjusts the weights against ERCOT, and the weights of a stratum sum to 1."
+  # Tolerances of the gates of the grouping (rounding only): explained is 0 at
+  # k = 1 and never falls by more than gate_zero_tolerance from one k to the
+  # next; the starting weights of a stratum sum to 1 within
+  # gate_weight_sum_tolerance.
+  gate_zero_tolerance: 1.0e-12
+  gate_weight_sum_tolerance: 1.0e-9
   # Guards of the download of the network files.
   download_max_gb: 40
   download_min_free_gb: 150
@@ -233,3 +304,133 @@ runs:
   # Coupling processes at once for phase 5b (schedule C of decision K69); the
   # phases that download (pre to 5a) run one feeder at a time.
   parallel: 4
+  # pipeline_config.yaml of the runs: AMY2018 weather for homes (decision
+  # K22), the ResStock 2024 release 2 run on actual meteorological year 2018
+  # weather, on OEDI under
+  # https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/resstock_amy2018_release_2/
+  pipeline_override:
+    eulp_release:
+      residential: "resstock_amy2018_release_2"
+
+curves:
+  # Year curves of the run feeders and common days (K48 with K60, K66, K67).
+  # Method note: docs/curves.md. Files of the coupling's workspace at its pin
+  # (config/coupling_pin.yaml), phase 5b: the recipe and the peak days, both
+  # named after the coupling's state code, in
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5b_profile_generation/find_max_day_curve_impl.py
+  recipe_file: "TX_required_parquets_per_feeder.csv"
+  peak_days_file: "TX_peak_days.csv"
+  # Months of each season, in the order the outputs list the seasons; the
+  # coupling's seasons at its pin (find_max_day_curve_impl.py).
+  seasons:
+    winter: [12, 1, 2]
+    summer: [6, 7, 8]
+  # The coupling's calendar: point 1 at 2025-01-01 00:00, 15 minutes apart
+  # (find_max_day_curve_impl.py, monthly_peak_curves).
+  coupling_start: "2025-01-01 00:00:00"
+  # Relative tolerance of the check of the rebuilt seasonal peak against the
+  # coupling's TX_peak_days.csv (K66).
+  check_rel_tolerance: 1.0e-6
+  # End uses listed at the peak of each common day.
+  top_end_uses: 5
+  # Source of the timestamp convention of the building files, read on OEDI (section "Units and timestamps").
+  timestamp_source: "https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/README.md"
+  # Written to timestamps.csv, column convention.
+  timestamp_convention: "ASSUMPTION: each timestamp of a building file marks the end of its 15-minute interval, so the date of a point is the date of its interval start and 2019-01-01 00:00 belongs to 31 December 2018. The OEDI README of the End Use Load Profiles states that results timestamps are 15-minute period-ending in EST; the release folders' own READMEs state no convention. The dates are taken as written, with no shift from Eastern to Central time."
+  end_uses_assumption: "ASSUMPTION: the end uses of a building file are its columns out.electricity.<end use>.energy_consumption other than total and net; net is total less PV output, not an end use, and the end uses add to total within the rounding of the files."
+
+fit_target:
+  # Settings of the fit target, read by dxsew.fit.target. Method note:
+  # docs/fit_target.md.
+  balancing_area: ERCO
+  year: 2018
+  state: TX
+  classes_kept: [residential, commercial]
+  classes_removed: [industrial, transportation]
+  # United States Central Standard Time is UTC minus 6 hours: 15 U.S.C. 261(a),
+  # "the standard time of the sixth zone", https://www.law.cornell.edu/uscode/text/15/261
+  standard_utc_offset_hours: -6
+  # Time zone of EIA's local-time column (Central prevailing time, with
+  # daylight saving), IANA time zone database name; checked against UTC only.
+  prevailing_time_zone: "America/Chicago"
+  max_interpolated_gap_hours: 3
+  max_interpolated_gap_hours_assumption: "ASSUMPTION: hours with missing or non-positive ERCO demand are filled by linear interpolation for gaps of up to 3 hours and by the same hour of the previous day for longer gaps."
+  consistency_band: [0.85, 1.15]
+  consistency_band_assumption: "ASSUMPTION: the ratio of sum(T_t) to EIA-861 residential plus commercial sales is flagged when it lies outside 0.85 to 1.15. The band only flags the ratio for review; nothing is rescaled."
+
+  # The two ASSUMPTION texts. The run fills the placeholders with the computed values
+  # and writes the filled texts to the summary file.
+  assumptions:
+    removed_load: >-
+      ASSUMPTION: ERCOT industrial and transportation load is a constant {removed_mw:.0f} MW
+      in every hour of {year}, equal to their EIA-861 {year} sales in balancing authority
+      {balancing_area} divided by {hours:,} hours. Hourly industrial load for ERCOT is not
+      published; the constant removes the right annual energy and leaves its hourly shape
+      inside the target.
+    losses: >-
+      ASSUMPTION: transmission and distribution losses are a constant {loss_share:.2%} of
+      ERCOT demand in every hour of {year}, the Texas {year} share from EIA's State
+      Electricity Profile, Table 10. Losses rise with the square of current, so the true
+      share is higher at peak and lower at night.
+
+  # ERCOT's own published figures for the year, for comparison only (check 6).
+  # Written to the summary under <label>_published.
+  published:
+    source: https://www.ercot.com/files/docs/2019/04/16/ERCOT_2018_State_of_the_Grid_Report.pdf
+    source_page: 2
+    retrieved: 2026-11-11
+    peak_mw: 73473
+    peak_text: "On July 19, the grid operator set a new all-time system-wide peak demand record when electricity demand reached 73,473 MW between 4 and 5 p.m."
+    peak_local_hour_ending: "2018-07-19T17:00:00-05:00"
+    annual_energy_mwh: 376000000
+    annual_energy_text: "Consumers used more than 376 billion kilowatt-hours of energy in 2018"
+
+fit:
+  # Fit of the group weights and the sector factors (decisions K43, K71).
+  # Method note: docs/fit.md.
+  last_fit_day: 21
+  last_fit_day_assumption: "ASSUMPTION: \"three weeks of every month\" in K43 is read as days 1 to 21 of each month, and the fourth week as day 22 to the month's end, so every hour of the year is used once."
+  hour_day_assumption: "ASSUMPTION: the day of an hour is the CST date of its hour start, so an hour ending 00:00 belongs to the day before (the hour-ending convention of the fit target and of the common days in docs/curves.md)."
+  end_use_tolerance: 1.0e-3
+  starting_tolerance: 1.0e-4
+  tolerances_assumption: "ASSUMPTION: tolerances of the two checks of the sector split, set by the hub for K71: the end uses of a stratum add to its kw within 0.1 % in every 15-minute point, and the hourly sector curves add to the starting model within 1e-4."
+  product_tolerance: 1.0e-12
+  product_tolerance_assumption: "ASSUMPTION: relative tolerance of the check e * m * c = M (rounding only)."
+  # The three ASSUMPTION texts of K71, beside the formulas they qualify. The run fills
+  # the placeholders with the computed values and writes the filled texts to
+  # summary.json. The same texts, with bare placeholders, are in docs/fit.md.
+  assumptions:
+    customer: "ASSUMPTION: a SMART-DS customer, one load name without its _1 or _2 phase ending, counts as one EIA-861 customer of the same class. The frame holds {N_frame_res:,.0f} homes and {N_frame_com:,.0f} businesses against {N_eia_res:,.0f} residential and {N_eia_com:,.0f} commercial customers that EIA-861 reports for ERCOT in {year}."
+    energy_factor: "ASSUMPTION: every home in ERCOT takes the same energy factor, {e_res:.4f} in {year}, and every business the same factor, {e_com:.4f}, in all seven strata, because EIA-861 reports sales and customers by balancing authority and class and not by climate zone or by urban and rural area."
+    classes: "ASSUMPTION: EIA-861 residential sales and customers in ERCOT describe the homes that ResStock models, and commercial sales and customers the buildings that ComStock models."
+  # Source texts of the sector inputs, written to sector_factors.csv and summary.json.
+  sources:
+    E: "stratum_curves.parquet of dxsew.texas.curves: the sector's end-use columns summed over strata and all 15-minute points, times 0.25 h, divided by 1,000"
+    N_model: "typical-feeder table (customers over run_feeder_customers of each group) times the run feeder's sector customers in the features file"
+    N_frame: "features file: the sector's customers summed over the frame feeders"
+
+trust:
+  # Trust checks of the balancing area map (decision K56). Method note:
+  # docs/texas_sample.md.
+  edge_km: 10.0
+  edge_km_assumption: "ASSUMPTION: 10 km marks a substation as near a balancing area edge, about the size of a large distribution substation's service area; the count shows how much of the frame depends on where the map draws its edges."
+  # Check 2 lists a county the PUCT marks served where fewer than this share
+  # of its substations lie in the polygons (one half: most of them).
+  puct_served_share: 0.5
+
+veto_report:
+  # Report-only run of the EIA-861 veto for one area of config/areas.yaml,
+  # with no SMART-DS data (dxsew.frame.veto). Source files and their layout
+  # come from these keys of this setup, so they are written in one place;
+  # files are read from data_root of config/local.yaml (eia, census and geo
+  # folders) and never downloaded by the report.
+  eia861: "geography.balancing_area"
+  counties: "geography.counties"
+  map: "geography.balancing_area_map"
+  # Folder under data_root that receives the report files.
+  output_folder: "texas"
+  share_threshold: 0.5
+  share_threshold_assumption: "ASSUMPTION, for this report only: a county is \"in the map area\" when at least half of its area lies in polygons whose name starts with ba_prefix. The value is not taken from a source; it only sorts counties into classes."
+  area_shares_assumption: "ASSUMPTION: shares are computed on longitude and latitude degrees, not on an equal-area projection. Within one county the two differ by a negligible amount, since the scale of a degree of longitude changes little across a county."
+  # Decimals of the column share_in_area.
+  share_decimals: 6

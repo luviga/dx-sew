@@ -2,7 +2,7 @@
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.trust --stamp <stamp> [--puct-counties <csv>]
+    uv run python -m dxsew.frame.trust --stamp <stamp> [--puct-counties <csv>] [--setup <id>]
 
 The frame rule places a substation by the polygon of the balancing area map
 that holds the centroid of its load buses (``ba``). The map's shapes are rough:
@@ -10,7 +10,7 @@ EIA, which publishes balancing area shapes from the same HIFLD control areas,
 says they overlap, have gaps and are not strict boundaries
 (https://services7.arcgis.com/FGr1D95XCGALKXqM/ArcGIS/rest/services/Balancing_Authorities/FeatureServer).
 Four checks set the map against other sources. None changes the frame; each
-writes a CSV with the stamp to ``<data_root>/texas/``.
+writes a CSV with the stamp to ``<data_root>/<output_folder>/``.
 
 1. Zone agreement: the zone ending of the load shape names of the release
    (``-Coast``, ``-North-Central``, ...) against the ERCOT polygon zone.
@@ -32,7 +32,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from dxsew.config import Paths, find_configs, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, input_path, load_local, load_runtime, load_sample_settings
 from dxsew.frame import ba_map as ba
 from dxsew.frame import frame as frame_module
 from dxsew.frame import geo
@@ -41,10 +42,8 @@ from dxsew.sources import smartds_dss as dss
 from dxsew.sources import smartds_names as names
 
 NO_ENDING = "(no ending)"
-ZONE_CODES_NAME = "smartds_zone_codes.csv"
-
-# ASSUMPTION: 10 km marks a substation as near a balancing area edge, about the size of a large distribution substation's service area; the count shows how much of the frame depends on where the map draws its edges.
-EDGE_KM = 10.0
+# The distance that marks a substation as near an edge is the setup's
+# trust.edge_km, with its sentence beside it.
 
 # ------------------------------------------------------------ 1 zone agreement
 
@@ -179,11 +178,12 @@ def puct_compare(shares: pd.DataFrame, puct: pd.DataFrame) -> pd.DataFrame:
     ``not served``). Listed: a county the PUCT marks served where fewer than
     half its substations lie in the polygons, and a county the PUCT marks not
     served where any substation does. Every county is returned with the column
-    ``listed``.
+    ``listed``. "Half" is the setup's ``trust.puct_served_share``.
     """
+    half = config.setup()["trust"]["puct_served_share"]
     status = dict(zip(puct["county"].map(geo.name_key), puct["status"]))
     table = shares.assign(puct_status=shares["county_key"].map(status))
-    table["listed"] = ((table["puct_status"] == SERVED) & (table["share_inside"] < 0.5)) | (
+    table["listed"] = ((table["puct_status"] == SERVED) & (table["share_inside"] < half)) | (
         (table["puct_status"] == NOT_SERVED) & (table["inside"] > 0)
     )
     return table
@@ -239,14 +239,16 @@ def eia861_summary(table: pd.DataFrame) -> pd.DataFrame:
 # ------------------------------------------------------------ 4 edges
 
 
-def edges(frame: pd.DataFrame, areas: list[ba.Area], prefix: str, limit_km: float = EDGE_KM) -> pd.DataFrame:
+def edges(frame: pd.DataFrame, areas: list[ba.Area], prefix: str, limit_km: float | None = None) -> pd.DataFrame:
     """Distance from each frame substation to the nearest polygon of another balancing area.
 
     A frame substation lies inside a polygon of ``prefix``; its distance to
     the nearest polygon whose name does not start with ``prefix`` is its
     distance to the edge between its balancing area and another one. A
     coastline or a national border with no polygon beyond it is no such edge.
+    ``limit_km`` defaults to the setup's ``trust.edge_km``.
     """
+    limit_km = config.setup()["trust"]["edge_km"] if limit_km is None else limit_km
     rows = []
     for unit in frame[frame["in_frame"]].itertuples(index=False):
         other, km = ba.nearest(unit.centroid_x, unit.centroid_y, areas,
@@ -267,19 +269,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stamp", required=True, help="stamp of the frame to check")
     parser.add_argument("--puct-counties", type=Path, default=None,
                         help="CSV with columns county,status (served, partly, not served) from the PUCT layer")
-    parser.add_argument("--processes", type=int, default=8, help="reader processes")
+    parser.add_argument("--processes", type=int, default=load_runtime()["workers"]["trust_processes"],
+                        help="reader processes")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
 
     settings = load_sample_settings()
     paths = Paths(load_local(), settings)
-    out = paths.texas
+    out = paths.output
     frame = pd.read_parquet(out / f"frame_{args.stamp}.parquet")
     source = settings["geography"]["balancing_area_map"]
     prefix = source["ba_prefix"]
     areas = ba.read_areas(ba.map_files(source, paths.geo)[0])
 
     # 1 zone agreement
-    codes = names.read_zone_codes(find_configs().parent / "inputs" / ZONE_CODES_NAME)
+    codes = names.read_zone_codes(input_path(settings["inputs"]["zone_codes"]))
     endings = sorted(codes)
     pairs = pair_zones([a.ba for a in areas], endings, prefix)
     print("polygon zones:", pairs)
@@ -287,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     members = set(zip(frame.loc[frame["in_frame"], "subregion"], frame.loc[frame["in_frame"], "substation"]))
     tasks = [t for t in frame_module.substation_tasks(objects, paths) if (t["subregion"], t["substation"]) in members]
     with ProcessPoolExecutor(max_workers=max(1, args.processes)) as pool:
-        found = list(pool.map(read_zone_counts, tasks, chunksize=16))
+        found = list(pool.map(read_zone_counts, tasks, chunksize=load_runtime()["chunksize"]["trust"]))
     counts = {(f["subregion"], f["substation"]): f["counts"] for f in found}
     agreement = zone_agreement(frame, counts, pairs)
     write_csv(agreement, out / f"trust_zone_agreement_{args.stamp}.csv")
@@ -297,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
     print(table.to_string(index=False))
     worst = agreement[~agreement["agree"]].sort_values(["loads", "subregion", "substation"],
                                                        ascending=[False, True, True], kind="mergesort")
-    print(worst.head(20).drop(columns="endings").to_string(index=False))
+    print(worst.head(load_runtime()["print_rows"]).drop(columns="endings").to_string(index=False))
 
     # 2 PUCT county list
     shares = county_shares(frame, prefix)
@@ -321,10 +326,11 @@ def main(argv: list[str] | None = None) -> int:
     print(eia[eia["pulls_away"]].to_string(index=False))
 
     # 4 edges
-    near = edges(frame, areas, prefix)
+    edge_km = settings["trust"]["edge_km"]
+    near = edges(frame, areas, prefix, edge_km)
     write_csv(near, out / f"trust_edges_{args.stamp}.csv")
     hit = near[near["near_edge"]]
-    print(f"frame substations within {EDGE_KM:g} km of another balancing area: {len(hit)} of {len(near)}, "
+    print(f"frame substations within {edge_km:g} km of another balancing area: {len(hit)} of {len(near)}, "
           f"{int(hit['loads'].sum())} of {int(near['loads'].sum())} loads")
     print(hit.sort_values("km_to_other_ba").to_string(index=False))
     return 0

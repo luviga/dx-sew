@@ -7,7 +7,8 @@ Energy (energy only) or Delivery (delivery only). Summing Energy and Delivery
 rows for the same customers counts their MWh twice (PUDL table
 core_eia861__yearly_sales, https://data.catalyst.coop/preview/pudl/core_eia861__yearly_sales),
 so Delivery rows are dropped. The same rule applies to the customer counts. The
-URL is in configs/sources.yaml under eia861_<year>.
+URL is in config/sources.yaml under eia861_<year>. The file name, sheet and header rows
+are the block eia861 of the setup.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from dxsew import config
 from dxsew.sources import download as _download
 from dxsew.sources import load_sources
 
@@ -43,27 +45,31 @@ def download(folder: Path | str, year: int, sources: dict | None = None, log=pri
     return _download(sources[f"eia861_{year}"]["url"], folder, log=log)
 
 
-def read_sales(zip_path: Path | str, year: int) -> pd.DataFrame:
+def read_sales(zip_path: Path | str, year: int, layout: dict | None = None) -> pd.DataFrame:
     """Sheet States of Sales_Ult_Cust_<year>.xlsx as a tidy table.
+
+    ``layout`` is the block ``eia861`` of a setup (default: the setup of the
+    process): the file name, the sheet and its three header rows.
 
     Columns: the identifiers of ID_COLUMNS, and <class>_mwh (measure Sales,
     unit Megawatthours) and <class>_customers (measure Customers, unit Count)
     for each class in CLASSES (the customers columns only when the sheet has
     them). Cells published as "." become missing. Footnote rows are dropped.
     """
+    layout = layout or config.setup()["eia861"]
     with zipfile.ZipFile(zip_path) as z:
-        data = z.read(f"Sales_Ult_Cust_{year}.xlsx")
-    raw = pd.read_excel(io.BytesIO(data), sheet_name="States", header=None)
-    group = raw.iloc[0].ffill()
-    measure = raw.iloc[1]
-    names = raw.iloc[2].astype(str).str.split("\n").str[0].str.strip()
+        data = z.read(layout["sales_file"].format(year=year))
+    raw = pd.read_excel(io.BytesIO(data), sheet_name=layout["sales_sheet"], header=None)
+    group = raw.iloc[layout["sales_group_row"]].ffill()
+    measure = raw.iloc[layout["sales_measure_row"]]
+    names = raw.iloc[layout["sales_names_row"]].astype(str).str.split("\n").str[0].str.strip()
     columns = {}
     for i in range(raw.shape[1]):
         if names[i] in ID_COLUMNS:
             columns[i] = ID_COLUMNS[names[i]]
         elif str(measure[i]).strip() in MEASURES and str(group[i]).strip().lower() in CLASSES:
             columns[i] = f"{str(group[i]).strip().lower()}_{MEASURES[str(measure[i]).strip()]}"
-    body = raw.iloc[3:, list(columns)].rename(columns=columns)
+    body = raw.iloc[layout["sales_names_row"] + 1 :, list(columns)].rename(columns=columns)
     body = body[pd.to_numeric(body["data_year"], errors="coerce") == year].copy()
     for c in CLASSES:
         body[f"{c}_mwh"] = pd.to_numeric(body[f"{c}_mwh"], errors="coerce")

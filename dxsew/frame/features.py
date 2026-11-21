@@ -1,19 +1,19 @@
-"""Feature table of every feeder of the ERCOT frame (decisions K60 and K61).
+"""Feature table of every feeder of the frame (decisions K60 and K61).
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.features --stamp <stamp> --frame-stamp <frame stamp> \\
-        [--workers 16] [--processes 8]
+    uv run python -m dxsew.frame.features --stamp <stamp> --frame-stamp <frame stamp> \\
+        [--workers 16] [--processes 8] [--setup <id>]
 
 A feeder is a folder of the ``opendss`` tree that holds both ``loads.dss`` and
 ``loadshapes.dss`` (``frame.FEEDER_FILES``); the feeders read are those of the
 substations with ``in_frame`` true in ``frame_<frame stamp>.parquet``. The
 network files named in ``groups.feeder_network_files`` are downloaded first
 (already present files are reused). Every file is read as text; no circuit is
-compiled. Release: SMART-DS v0.9 Full Texas,
+compiled. Release: the setup's ``release`` block (SMART-DS),
 https://data.openei.org/submissions/2981
 
-Writes ``<data_root>/texas/features_<stamp>.parquet``, one row per frame
+Writes ``<data_root>/<output_folder>/features_<stamp>.parquet``, one row per frame
 feeder, and ``missing_network_files_<stamp>.csv`` when a feeder lacks a
 network file. Columns:
 
@@ -33,8 +33,9 @@ From ``Lines.dss`` (empty when the feeder has no such file)
     a line without ``length`` counts 0); ``lines_without_units`` (lines read
     in ``groups.line_units_default``); ``extent_km`` (longest shortest-path
     distance between two buses of the line graph, line lengths as weights,
-    by two sweeps of Dijkstra's search in every connected part; ASSUMPTION:
-    exact on a radial feeder and a lower bound where loops exist);
+    by two sweeps of Dijkstra's search in every connected part; exact on a
+    radial feeder and a lower bound where loops exist, the setup's sentence
+    ``groups.extent_km``);
     ``graph_parts`` (connected parts of the line graph). The line graph has
     one edge per line and one edge of 0 km per regulator, between the buses
     of its first two windings.
@@ -75,13 +76,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from dxsew.config import Paths, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, load_local, load_runtime, load_sample_settings, load_units
 from dxsew.frame.frame import FEEDER_FILES, LOADS_FILE, opendss_objects
 from dxsew.frame.sample import write_csv, write_parquet
 from dxsew.sources import oedi
 from dxsew.sources import smartds_dss as dss
 
-BYTES_PER_GB = 1e9  # decimal gigabyte, as in sample.py
+BYTES_PER_GB = load_units()["bytes_per_gb"]  # decimal gigabyte, as in sample.py
 IDENTITY = ["subregion", "substation", "feeder", "stratum", "county"]
 COLUMNS = IDENTITY + [
     "loads",
@@ -112,8 +114,8 @@ LINE_COLUMNS = ["lines", "line_km", "lines_without_units", "extent_km", "graph_p
 TRANSFORMER_COLUMNS = ["service_transformers", "regulators", "service_kva", "primary_kv", "kva_per_kw"]
 # Line-to-line over line-to-neutral voltage of a balanced three-phase system
 # (the phase-to-phase and phase-to-neutral phasors of a wye differ by the
-# square root of 3); a fact of the circuit, not a setting.
-LINE_TO_LINE_PER_LINE_TO_NEUTRAL = math.sqrt(3.0)
+# square root of 3); a fact of the circuit, not a setting: config/units.yaml.
+LINE_TO_LINE_PER_LINE_TO_NEUTRAL = math.sqrt(load_units()["wye_voltage_ratio_squared"])
 
 
 def frame_feeders(objects: pd.DataFrame, frame: pd.DataFrame) -> pd.DataFrame:
@@ -200,7 +202,7 @@ def is_service(transformer: dss.Transformer, max_low_kv: float) -> bool:
 
 def regulator_edge(transformer: dss.Transformer) -> tuple[str, str] | None:
     """Buses of the first two windings of a transformer, or None when either is not given."""
-    if len(transformer.windings) < 2:
+    if len(transformer.windings) <= 1:
         return None
     bus1, bus2 = transformer.windings[0].bus, transformer.windings[1].bus
     if not bus1 or not bus2:
@@ -216,7 +218,7 @@ def line_to_line_kv(transformer: dss.Transformer) -> float | None:
     A transformer with ``phases=1`` whose highest-voltage winding names one
     phase node (``.2`` or ``.2.0``) sits between a phase and neutral, so its
     ``kv`` times the square root of 3 is the line-to-line voltage
-    (``groups.primary_kv_rule_assumption``). Any other transformer gives its
+    (the setup's sentence beside ``groups.primary_kv_rule``). Any other transformer gives its
     ``kv``. Ties of the highest voltage go to the first winding. None when no
     winding has a ``kv``.
     """
@@ -287,7 +289,8 @@ def read_feeder(task: dict) -> dict:
     )
     row.update({column: math.nan for column in LINE_COLUMNS + TRANSFORMER_COLUMNS})
     row["name_kv"] = name_kv(task["substation"], task["name_kv"])
-    transformers = dss.parse_transformers(_read(task["transformers"])) if task["transformers"] else []
+    transformers = (dss.parse_transformers(_read(task["transformers"]), task.get("default_windings"))
+                    if task["transformers"] else [])
     low = task["regulator_max_low_kv"]
     service = [transformer for transformer in transformers if is_service(transformer, low)]
     regulators = [transformer for transformer in transformers if not is_service(transformer, low)]
@@ -304,10 +307,10 @@ def read_feeder(task: dict) -> dict:
             extent_km=span,
             graph_parts=parts,
         )
-    # A feeder without Transformers.dss has no transformer
-    # (groups.missing_transformers_file_assumption), so its lists are empty and
-    # its transformer columns count 0. With no service transformer giving a
-    # voltage, primary_kv is name_kv (groups.primary_kv_fallback_assumption).
+    # A feeder without Transformers.dss has no transformer (the setup's
+    # sentence beside groups.missing_transformers_file), so its lists are empty
+    # and its transformer columns count 0. With no service transformer giving a
+    # voltage, primary_kv is name_kv (the sentence beside groups.primary_kv_fallback).
     ratings = [transformer.kva for transformer in service if transformer.kva is not None]
     service_kva = float(sum(ratings))
     row.update(
@@ -341,8 +344,12 @@ def feature_table(rows: list[dict]) -> tuple[pd.DataFrame, int]:
     return table, other
 
 
-def substation_check(table: pd.DataFrame, frame: pd.DataFrame) -> pd.DataFrame:
-    """Substations whose feeder sums of loads, customers or kW differ from the frame."""
+def substation_check(table: pd.DataFrame, frame: pd.DataFrame, tolerance: float | None = None) -> pd.DataFrame:
+    """Substations whose feeder sums of loads, customers or kW differ from the frame.
+
+    ``tolerance`` (relative, on kW) defaults to the setup's ``groups.substation_check_rel_tolerance``.
+    """
+    tolerance = config.setup()["groups"]["substation_check_rel_tolerance"] if tolerance is None else tolerance
     sums = table.groupby(["subregion", "substation"])[["loads", "customers", "load_kw"]].sum()
     frame_values = frame.loc[frame["in_frame"]].set_index(["subregion", "substation"])[
         ["loads", "customers", "load_kw"]
@@ -350,11 +357,12 @@ def substation_check(table: pd.DataFrame, frame: pd.DataFrame) -> pd.DataFrame:
     joined = frame_values.merge(
         sums, left_index=True, right_index=True, how="outer", suffixes=("", "_features")
     )
-    relative = (joined["load_kw_features"] - joined["load_kw"]).abs() / joined["load_kw"].abs().clip(lower=1e-12)
+    floor = load_runtime()["relative_floor"]
+    relative = (joined["load_kw_features"] - joined["load_kw"]).abs() / joined["load_kw"].abs().clip(lower=floor)
     bad = (
         (joined["loads"] != joined["loads_features"])
         | (joined["customers"] != joined["customers_features"])
-        | ~(relative <= 1e-6)
+        | ~(relative <= tolerance)
     )
     return joined[bad].reset_index()
 
@@ -363,15 +371,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--stamp", required=True, help="UTC stamp of the output names")
     parser.add_argument("--frame-stamp", required=True, help="stamp of frame_<stamp>.parquet")
-    parser.add_argument("--workers", type=int, default=16, help="download threads")
-    parser.add_argument("--processes", type=int, default=8, help="reader processes")
+    workers = load_runtime()["workers"]
+    parser.add_argument("--workers", type=int, default=workers["features_threads"], help="download threads")
+    parser.add_argument("--processes", type=int, default=workers["features_processes"], help="reader processes")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
     started = time.perf_counter()
 
     settings = load_sample_settings()
     rule = settings["groups"]
     paths = Paths(load_local(), settings)
-    out = paths.texas
+    out = paths.output
     frame = pd.read_parquet(out / f"frame_{args.frame_stamp}.parquet")
     listing = pd.read_parquet(paths.listing)
     objects = opendss_objects(listing, settings)
@@ -428,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         task["missing_transformers_file"] = rule["missing_transformers_file"]
         task["primary_kv_fallback"] = rule["primary_kv_fallback"]
         task["name_kv"] = {str(key): float(value) for key, value in rule["name_kv"].items()}
+        task["default_windings"] = int(settings["release"]["opendss_default_windings"])
         for name, key in zip(network_names, ("lines", "transformers")):
             if task[key] is None:
                 missing.append({**{k: task[k] for k in IDENTITY}, "file": name})
@@ -436,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
     read_start = time.perf_counter()
     if args.processes > 1:
         with ProcessPoolExecutor(max_workers=args.processes) as pool:
-            rows = list(pool.map(read_feeder, tasks, chunksize=32))
+            rows = list(pool.map(read_feeder, tasks, chunksize=load_runtime()["chunksize"]["features"]))
     else:
         rows = [read_feeder(task) for task in tasks]
     table, other = feature_table(rows)
@@ -451,10 +463,10 @@ def main(argv: list[str] | None = None) -> int:
     if len(unnamed):
         print(unnamed.to_string(index=False))
 
-    bad = substation_check(table, frame)
+    bad = substation_check(table, frame, rule["substation_check_rel_tolerance"])
     print(f"substations whose sums differ from the frame: {len(bad)}")
     if len(bad):
-        print(bad.head(20).to_string(index=False))
+        print(bad.head(load_runtime()["print_rows"]).to_string(index=False))
     print(f"written to {out} with stamp {args.stamp} in {time.perf_counter() - started:.0f} s")
     return 0
 

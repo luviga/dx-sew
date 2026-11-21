@@ -1,0 +1,26 @@
+# Terms the scan test (tests/regression/test_no_data_in_code.py) bans, as a
+# whole word in any case, from every string literal of the package outside
+# docstrings: the region, state and balancing-area names of every area of
+# config/areas.yaml and of every setup, and the names of neighbouring areas
+# that the code once named. The test also checks that this list holds every
+# name, state, rto, ba_code and ba_prefix of config/areas.yaml.
+scan:
+  forbidden_terms:
+    # config/areas.yaml
+    - "ERCOT"
+    - "ERCO"
+    - "TX"
+    - "CAISO"
+    - "CISO"
+    - "CA"
+    - "NYISO"
+    - "NYIS"
+    - "NY"
+    # setups
+    - "Texas"
+    # neighbours
+    - "SPP"
+    - "SWPP"
+    - "MISO"
+    - "EPE"
+    - "PNM"

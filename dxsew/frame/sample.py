@@ -2,7 +2,7 @@
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.sample [--minutes-per-feeder <minutes>]
+    uv run python -m dxsew.frame.sample [--minutes-per-feeder <minutes>] [--setup <id>]
 
 Steps: listing of the release (reused when the listing file exists), frame of
 substations, county, balancing area by location (decision K56), county
@@ -25,17 +25,17 @@ import numpy as np
 import pandas as pd
 import requests
 
-from dxsew.config import Paths, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, load_local, load_runtime, load_sample_settings, load_units
 from dxsew.frame import ba_map as ba
 from dxsew.frame import frame as frame_module
 from dxsew.frame import geo
 from dxsew.frame import veto as frame_veto
 from dxsew.sources import oedi
 
-BYTES_PER_GB = 1e9  # decimal gigabyte, the unit of every GB column
-# Year of the EIA-861 files named in geography.balancing_area (f8612018.zip);
-# the veto lookups read the sales and short form files of this year.
-SALES_YEAR = 2018
+BYTES_PER_GB = load_units()["bytes_per_gb"]  # decimal gigabyte, the unit of every GB column
+# The year of the EIA-861 files named in geography.balancing_area is the
+# setup's eia861.year; the veto lookups read the sales and short form files of it.
 ORDER_COLUMNS = ["loads", "subregion", "substation"]
 SAMPLE_COLUMNS = [
     "stratum",
@@ -138,7 +138,7 @@ def geography_columns(
     zone of its county. The county status from EIA-861 (decision K52) is kept
     as ``county_status_eia861`` for checking and plays no part in the frame.
 
-    ``veto`` is the county table of ``dxsew.veto.county_veto`` (decisions K57, K58), or
+    ``veto`` is the county table of ``dxsew.frame.veto.county_veto`` (decisions K57, K58), or
     ``None`` when the veto is off. When given, ``county_veto_eia861`` is true
     for a substation whose county is vetoed, false for one whose county is
     not (or is not in the table), and empty for one with no county; a vetoed
@@ -175,9 +175,9 @@ def veto_for(
     eia_zip: Path,
     counties: list[geo.County],
     status: pd.DataFrame,
-    sales_year: int = SALES_YEAR,
+    sales_year: int | None = None,
 ) -> pd.DataFrame | None:
-    """County veto table of ``dxsew.veto.county_veto`` when ``balancing["veto"]`` is on, else ``None``.
+    """County veto table of ``dxsew.frame.veto.county_veto`` when ``balancing["veto"]`` is on, else ``None``.
 
     ``balancing`` carries ``rto``, ``veto_ignore_marks``, ``veto_lookups``
     (default false) and ``ba_code`` (required with the lookups on);
@@ -187,21 +187,25 @@ def veto_for(
     """
     if not balancing.get("veto", False):
         return None
+    sales_year = config.setup()["eia861"]["year"] if sales_year is None else sales_year
     veto = frame_veto.county_veto(eia_zip, balancing, sales_year)
     census = {geo.name_key(county.name): county for county in counties}
-    veto.insert(2, "county", veto["county_key"].map(lambda key: census[key].name if key in census else None))
-    veto.insert(3, "county_geoid", veto["county_key"].map(lambda key: census[key].geoid if key in census else None))
-    veto.insert(4, "county_status_eia861", veto["county_key"].map(dict(zip(status["county_key"], status["status"]))))
+    after = veto.columns.get_loc("county_eia") + 1
+    veto.insert(after, "county", veto["county_key"].map(lambda key: census[key].name if key in census else None))
+    veto.insert(after + 1, "county_geoid", veto["county_key"].map(lambda key: census[key].geoid if key in census else None))
+    veto.insert(after + 1 + 1, "county_status_eia861",
+                veto["county_key"].map(dict(zip(status["county_key"], status["status"]))))
     return veto
 
 
-def veto_lookups_for(balancing: dict, eia_zip: Path, sales_year: int = SALES_YEAR) -> pd.DataFrame | None:
-    """Every utility of the state a veto lookup touched (``dxsew.veto.lookup_table``).
+def veto_lookups_for(balancing: dict, eia_zip: Path, sales_year: int | None = None) -> pd.DataFrame | None:
+    """Every utility of the state a veto lookup touched (``dxsew.frame.veto.lookup_table``).
 
     ``None`` when the veto is off; an empty table when ``veto_lookups`` is off.
     """
     if not balancing.get("veto", False):
         return None
+    sales_year = config.setup()["eia861"]["year"] if sales_year is None else sales_year
     return frame_veto.lookup_table(eia_zip, balancing, sales_year)
 
 
@@ -376,7 +380,7 @@ def size_row(
         "parquet_gb": float(used["bytes"].sum()) / BYTES_PER_GB,
     }
     for value in minutes:
-        row[f"hours_at_{value:g}_min_per_feeder"] = feeders * value / 60
+        row[f"hours_at_{value:g}_min_per_feeder"] = feeders * value / load_units()["minutes_per_hour"]
     return row
 
 
@@ -444,14 +448,16 @@ def main(argv: list[str] | None = None) -> int:
         "default sample.minutes_per_feeder of the settings",
     )
     parser.add_argument("--refresh-listing", action="store_true", help="list the release again")
-    parser.add_argument("--workers", type=int, default=32, help="download threads")
+    parser.add_argument("--workers", type=int, default=load_runtime()["workers"]["sample_threads"], help="download threads")
     parser.add_argument("--processes", type=int, default=os.cpu_count() or 1, help="reader processes")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
 
     settings = load_sample_settings()
     paths = Paths(load_local(), settings)
     stamp = args.stamp or utc_stamp()
-    out = paths.texas
+    out = paths.output
 
     listing = get_listing(settings, paths, args.refresh_listing)
     by_top, by_subregion = listing_counts(listing, settings)

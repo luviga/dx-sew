@@ -1,7 +1,7 @@
-"""Fit one weight per fit column to ERCOT's 2018 hourly target (decision K43).
+"""Fit one weight per fit column to the area's hourly target of the setup's year (decision K43).
 
 The weighted sum of the groups' hourly curves is fitted to the hourly target of
-``dxsew.fit_target`` by non-negative least squares on three weeks of every month
+``dxsew.fit.target`` by non-negative least squares on three weeks of every month
 and checked on the rest of each month. Errors of energy, monthly peak and daily
 range are reported for three models: the starting weights, one common scale and
 the fitted weights. Method and outputs: docs/fit.md.
@@ -11,7 +11,7 @@ Formulas
 c_f(h)  Hourly curve of run feeder f in MW for the Central Standard Time (CST,
         UTC minus 6 hours) hour ending h: the mean of the four 15-minute kW
         values stamped h + 15 min to h + 60 min in Eastern Standard Time (EST,
-        UTC minus 5 hours), divided by 1,000. The building files' timestamps are
+        UTC minus 5 hours), divided by 1,000 (config/units.yaml). The building files' timestamps are
         "15-minute period-ending in EST" (README of the End Use Load Profiles,
         section "Units and timestamps",
         https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/README.md).
@@ -36,10 +36,13 @@ sector_formula       M_res R(h) + M_com B(h), the K71 model; nothing is fitted.
 sector_fit           s_res R(h) + s_com B(h), s >= 0 by nnls on the fit hours. Report only.
 scale_plus_constant  a X(h) + b, least squares on the fit hours. Report only.
 
-Run: uv run python -m dxsew.fit --stamp <stamp> --curves <feeder_curves.parquet>
+Run: uv run python -m dxsew.fit.weights --stamp <stamp> --curves <feeder_curves.parquet>
      --typical <typical_feeders csv> --target <fit target parquet>
      --stratum-curves <stratum_curves.parquet> --features <features parquet>
-     --eia861 <EIA-861 zip>
+     --eia861 <EIA-861 zip> [--setup <id>]
+
+Setup values: the block fit (last fit day, tolerances, the K71 texts and the
+source texts of the sector inputs) with the sentence beside each value.
 """
 
 from __future__ import annotations
@@ -53,23 +56,25 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import nnls
 
+from dxsew import config
+from dxsew.config import load_local, load_runtime, load_units
 from dxsew.sources import eia861, load_sources
-from dxsew.config import load_local
 
-POINTS_PER_HOUR = 4
-KW_PER_MW = 1000.0
+POINTS_PER_HOUR = load_units()["points_per_hour"]
+KW_PER_MW = load_units()["kw_per_mw"]
 # EST (UTC minus 5 hours) is one hour ahead of CST (UTC minus 6 hours).
 EST_MINUS_CST = pd.Timedelta(hours=1)
 HOUR = pd.Timedelta(hours=1)
 
-# ASSUMPTION: "three weeks of every month" in K43 is read as days 1 to 21 of each
-# month, and the fourth week as day 22 to the month's end, so every hour of the
-# year is used once.
-LAST_FIT_DAY = 21
 
-# ASSUMPTION: the day of an hour is the CST date of its hour start, so an hour
-# ending 00:00 belongs to the day before (the hour-ending convention of the fit
-# target and of the common days in docs/curves.md).
+def _fit() -> dict:
+    """The block ``fit`` of the setup of this process: last fit day, tolerances and texts.
+
+    The day of an hour is the CST date of its hour start (the setup's sentence
+    ``fit.hour_day``).
+    """
+    return config.setup()["fit"]
+
 
 MODELS = ("starting", "common_scale", "fitted", "sector_formula", "sector_fit", "scale_plus_constant")
 SPLITS = ("test", "fit")
@@ -150,10 +155,11 @@ def hour_day(hours) -> pd.DatetimeIndex:
     return (pd.DatetimeIndex(hours) - HOUR).normalize()
 
 
-def split_of(hours) -> np.ndarray:
-    """``"fit"`` for days 1 to LAST_FIT_DAY of each month, else ``"test"``."""
+def split_of(hours, last_fit_day: int | None = None) -> np.ndarray:
+    """``"fit"`` for days 1 to ``last_fit_day`` (the setup's ``fit.last_fit_day``) of each month, else ``"test"``."""
+    last_fit_day = _fit()["last_fit_day"] if last_fit_day is None else last_fit_day
     day = hour_day(hours).day
-    return np.where(day <= LAST_FIT_DAY, "fit", "test")
+    return np.where(day <= last_fit_day, "fit", "test")
 
 
 # 4. Fit.
@@ -272,34 +278,11 @@ SECTOR_CLASS = {"res": "residential", "com": "commercial"}
 SECTOR_NAME = {"res": "homes", "com": "businesses"}
 HOURS_PER_POINT = 1.0 / POINTS_PER_HOUR
 
-# ASSUMPTION: tolerances of the two checks of the sector split, set by the hub for
-# K71: the end uses of a stratum add to its kw within 0.1 % in every 15-minute
-# point, and the hourly sector curves add to the starting model within 1e-4.
-END_USE_TOLERANCE = 1e-3
-STARTING_TOLERANCE = 1e-4
-# ASSUMPTION: relative tolerance of the check e * m * c = M (rounding only).
-PRODUCT_TOLERANCE = 1e-12
-
-# The three ASSUMPTION texts of K71, beside the formulas they qualify. The run fills
-# the placeholders with the computed values and writes the filled texts to
-# summary.json. The same texts, with bare placeholders, are in docs/fit.md.
-ASSUMPTIONS = {
-    "customer": (
-        "ASSUMPTION: a SMART-DS customer, one load name without its _1 or _2 phase ending, counts as one "
-        "EIA-861 customer of the same class. The frame holds {N_frame_res:,.0f} homes and {N_frame_com:,.0f} "
-        "businesses against {N_eia_res:,.0f} residential and {N_eia_com:,.0f} commercial customers that "
-        "EIA-861 reports for ERCOT in {year}."
-    ),
-    "energy_factor": (
-        "ASSUMPTION: every home in ERCOT takes the same energy factor, {e_res:.4f} in {year}, and every business "
-        "the same factor, {e_com:.4f}, in all seven strata, because EIA-861 reports sales and customers by "
-        "balancing authority and class and not by climate zone or by urban and rural area."
-    ),
-    "classes": (
-        "ASSUMPTION: EIA-861 residential sales and customers in ERCOT describe the homes that ResStock models, "
-        "and commercial sales and customers the buildings that ComStock models."
-    ),
-}
+# The tolerances of the two checks of the sector split (fit.end_use_tolerance,
+# fit.starting_tolerance), of the check e * m * c = M (fit.product_tolerance) and
+# the three texts of K71 that the run fills and writes to summary.json are keys
+# of the block fit of the setup, each with its sentence beside it. The same
+# texts, with bare placeholders, are in docs/fit.md.
 
 
 def sector_columns(columns, sector: str) -> list[str]:
@@ -307,17 +290,19 @@ def sector_columns(columns, sector: str) -> list[str]:
     return [c for c in columns if str(c).startswith(f"{sector}:")]
 
 
-def sector_curves(stratum: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def sector_curves(stratum: pd.DataFrame, tolerance: float | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The frame's 15-minute homes and businesses curves at starting weights.
 
-    ``stratum`` is ``stratum_curves.parquet`` of dxsew.texas.curves (columns
+    ``stratum`` is ``stratum_curves.parquet`` of dxsew.curves.year (columns
     ``stratum``, ``timestamp``, ``kw``, ``res:<end use>``, ``com:<end use>``).
     R(t) is the sum over strata of every ``res:`` column and B(t) the same for
     ``com:``, in kW on the building files' own timestamps. Returns the curves
     (index ``timestamp``; columns ``res``, ``com`` and ``kw``, the sum of the
     strata's kw) and, per stratum, the largest gap |kw - (res sum + com sum)| in
-    kW and relative to kw, its timestamp, and the points over END_USE_TOLERANCE.
+    kW and relative to kw, its timestamp, and the points over ``tolerance`` (the
+    setup's ``fit.end_use_tolerance`` by default).
     """
+    tolerance = _fit()["end_use_tolerance"] if tolerance is None else tolerance
     res = stratum[sector_columns(stratum.columns, "res")].astype(float).sum(axis=1)
     com = stratum[sector_columns(stratum.columns, "com")].astype(float).sum(axis=1)
     kw = stratum["kw"].astype(float)
@@ -331,7 +316,7 @@ def sector_curves(stratum: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         checks.append({"stratum": name, "points": len(part), "max_gap_kw": float(part["gap_kw"].max()),
                        "max_gap_rel": float(part.at[worst, "gap_rel"]),
                        "max_gap_rel_timestamp": part.at[worst, "timestamp"],
-                       "points_over_tolerance": int((part["gap_rel"] > END_USE_TOLERANCE).sum())})
+                       "points_over_tolerance": int((part["gap_rel"] > tolerance).sum())})
     curves = table.groupby("timestamp", sort=True)[["res", "com", "kw"]].sum()
     return curves, pd.DataFrame(checks)
 
@@ -370,20 +355,24 @@ def sector_customers(typical: pd.DataFrame, features: pd.DataFrame) -> dict:
     }
 
 
-def sector_factors(S: float, N_eia: float, E: float, N_model: float, N_frame: float) -> dict:
+def sector_factors(S: float, N_eia: float, E: float, N_model: float, N_frame: float,
+                   tolerance: float | None = None) -> dict:
     """The K71 factors of one sector and the check e * m * c = M.
 
     M = S / E                          multiplier on the frame's sector curve for the ERCOT total
     e = (S / N_eia) / (E / N_model)    energy factor; the one that reaches each feeder's sector load
     m = N_frame / N_model              mix factor
     c = N_eia / N_frame                count factor
+
+    ``tolerance`` is the setup's ``fit.product_tolerance`` by default.
     """
+    tolerance = _fit()["product_tolerance"] if tolerance is None else tolerance
     M = S / E
     e = (S / N_eia) / (E / N_model)
     m = N_frame / N_model
     c = N_eia / N_frame
     product_gap = abs(e * m * c - M) / M
-    if product_gap > PRODUCT_TOLERANCE:
+    if product_gap > tolerance:
         raise ArithmeticError(f"e * m * c differs from M by {product_gap:.3e} relative")
     return {"M": M, "e": e, "m": m, "c": c, "product_gap": product_gap}
 
@@ -423,7 +412,9 @@ def sector_model(stratum: pd.DataFrame, typical: pd.DataFrame, features: pd.Data
     ``eia`` is the result of ``sector_inputs``; ``sources`` gives the source text of
     each input (keys ``eia861``, ``E``, ``N_model``, ``N_frame``).
     """
-    curves, checks = sector_curves(stratum)
+    rule = _fit()
+    texts_key = load_runtime()["names"]["texts_key"]
+    curves, checks = sector_curves(stratum, rule["end_use_tolerance"])
     hourly = sector_hourly(curves, hours)
     energy = sector_energy_mwh(curves)
     counts = sector_customers(typical, features)
@@ -431,7 +422,7 @@ def sector_model(stratum: pd.DataFrame, typical: pd.DataFrame, features: pd.Data
     for k in SECTORS:
         cls = SECTOR_CLASS[k]
         S, N_eia = eia["mwh"][cls], eia["customers"][cls]
-        f = sector_factors(S, N_eia, energy[k], counts["N_model"][k], counts["N_frame"][k])
+        f = sector_factors(S, N_eia, energy[k], counts["N_model"][k], counts["N_frame"][k], rule["product_tolerance"])
         factors[k] = f
         rows.append({
             "sector": k, "sector_name": SECTOR_NAME[k], "eia861_class": cls,
@@ -450,7 +441,7 @@ def sector_model(stratum: pd.DataFrame, typical: pd.DataFrame, features: pd.Data
                        f"e_{k}": factors[k]["e"]})
     return {"curves": curves, "checks": checks, "hourly": hourly, "energy": energy, "counts": counts,
             "factors": factors, "table": pd.DataFrame(rows),
-            "assumptions": {name: text.format(**values) for name, text in ASSUMPTIONS.items()}}
+            texts_key: {name: text.format(**values) for name, text in rule[texts_key].items()}}
 
 
 # Driver.
@@ -468,13 +459,15 @@ def run(curves: pd.DataFrame, typical: pd.DataFrame, target: pd.DataFrame, secto
     curves), ``features``, ``eia`` (result of ``sector_inputs``), ``year`` and
     ``sources`` (see ``sector_model``). Without it only J5's three models are run.
     """
+    rule = _fit()
+    texts_key = load_runtime()["names"]["texts_key"]
     hours = pd.DatetimeIndex(target["cst_hour_ending"]).tz_localize(None)
     target_series = pd.Series(target["target_mw"].to_numpy(dtype=float), index=hours)
     feeder_mw, left_out = hourly_curves(curves, hours)
     columns, groups = fit_columns(typical, feeder_mw)
     used = columns.index
     y = target_series.loc[used]
-    split = pd.Series(split_of(used), index=used)
+    split = pd.Series(split_of(used, rule["last_fit_day"]), index=used)
     fit_mask = (split == "fit").to_numpy()
 
     weights, residual = fit_nnls(columns.to_numpy()[fit_mask], y.to_numpy()[fit_mask])
@@ -516,9 +509,9 @@ def run(curves: pd.DataFrame, typical: pd.DataFrame, target: pd.DataFrame, secto
             "frame_feeders": sector_out["counts"]["frame_feeders"],
             "factors": sector_out["factors"],
             "s_res": s_res, "s_com": s_com, "a": a, "b": b,
-            "assumptions": sector_out["assumptions"],
+            texts_key: sector_out[texts_key],
             "check_end_uses": {
-                "tolerance": END_USE_TOLERANCE,
+                "tolerance": rule["end_use_tolerance"],
                 "max_gap_rel": float(checks.at[worst, "max_gap_rel"]),
                 "max_gap_rel_stratum": checks.at[worst, "stratum"],
                 "max_gap_rel_timestamp": str(checks.at[worst, "max_gap_rel_timestamp"]),
@@ -532,10 +525,10 @@ def run(curves: pd.DataFrame, typical: pd.DataFrame, target: pd.DataFrame, secto
                 * HOURS_PER_POINT / KW_PER_MW,
             },
             "check_starting": {
-                "tolerance": STARTING_TOLERANCE,
+                "tolerance": rule["starting_tolerance"],
                 "max_gap_rel": float(gap.max()),
                 "max_gap_rel_hour": str(gap.idxmax()),
-                "hours_over_tolerance": int((gap > STARTING_TOLERANCE).sum()),
+                "hours_over_tolerance": int((gap > rule["starting_tolerance"]).sum()),
                 "hours": len(gap),
             },
             "sector_formula_year_mwh": formula_year,
@@ -592,19 +585,22 @@ def run(curves: pd.DataFrame, typical: pd.DataFrame, target: pd.DataFrame, secto
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--stamp", required=True)
-    parser.add_argument("--curves", type=Path, required=True, help="feeder_curves.parquet of dxsew.texas.curves")
+    parser.add_argument("--curves", type=Path, required=True, help="feeder_curves.parquet of dxsew.curves.year")
     parser.add_argument("--typical", type=Path, required=True, help="typical_feeders csv")
-    parser.add_argument("--target", type=Path, required=True, help="fit target parquet of dxsew.fit_target")
+    parser.add_argument("--target", type=Path, required=True, help="fit target parquet of dxsew.fit.target")
     parser.add_argument("--target-summary", type=Path, default=None,
                         help="summary json of the fit target, default <target stem>_summary.json beside it")
-    parser.add_argument("--stratum-curves", type=Path, required=True, help="stratum_curves.parquet of dxsew.texas.curves")
+    parser.add_argument("--stratum-curves", type=Path, required=True, help="stratum_curves.parquet of dxsew.curves.year")
     parser.add_argument("--features", type=Path, required=True,
                         help="features parquet of the frame feeders (res_customers, com_customers)")
     parser.add_argument("--eia861", type=Path, required=True, help="EIA-861 zip of the target's year")
-    parser.add_argument("--out-root", type=Path, default=None, help="default <data_root>/texas")
+    parser.add_argument("--out-root", type=Path, default=None, help="default <data_root>/<output_folder of the setup>")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
+    setup = config.setup()
 
-    out_root = args.out_root or Path(load_local()["data_root"]) / "texas"
+    out_root = args.out_root or Path(load_local()["data_root"]) / setup["output_folder"]
     out_dir = out_root / f"fit_{args.stamp}"
     out_dir.mkdir(parents=True, exist_ok=False)
 
@@ -612,14 +608,7 @@ def main(argv: list[str] | None = None) -> int:
     target_summary = json.loads(target_summary_path.read_text(encoding="utf-8"))
     year, state, ba_code = int(target_summary["year"]), target_summary["state"], target_summary["balancing_area"]
     eia = sector_inputs(eia861.read_sales(args.eia861, year), state, ba_code)
-    sources = {
-        "eia861": load_sources()[f"eia861_{year}"]["url"],
-        "E": "stratum_curves.parquet of dxsew.texas.curves: the sector's end-use columns summed over strata "
-             "and all 15-minute points, times 0.25 h, divided by 1,000",
-        "N_model": "typical-feeder table (customers over run_feeder_customers of each group) times the run "
-                   "feeder's sector customers in the features file",
-        "N_frame": "features file: the sector's customers summed over the frame feeders",
-    }
+    sources = {"eia861": load_sources()[f"eia861_{year}"]["url"], **setup["fit"]["sources"]}
     sector = {"stratum": pd.read_parquet(args.stratum_curves), "features": pd.read_parquet(args.features),
               "eia": eia, "year": year, "sources": sources}
     result = run(pd.read_parquet(args.curves), pd.read_csv(args.typical), pd.read_parquet(args.target), sector)
@@ -636,8 +625,9 @@ def main(argv: list[str] | None = None) -> int:
                                                "target": str(args.target), "target_summary": str(target_summary_path),
                                                "stratum_curves": str(args.stratum_curves),
                                                "features": str(args.features), "eia861": str(args.eia861)}}
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
-    print(json.dumps(result["summary"], indent=2, default=str))
+    indent = load_runtime()["json_indent"]
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=indent, default=str), encoding="utf-8")
+    print(json.dumps(result["summary"], indent=indent, default=str))
     return 0
 
 

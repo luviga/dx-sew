@@ -1,16 +1,16 @@
 """Runs of DeltaE/dss-eulp-coupling at one pinned commit (decision K53).
 
 dx-sew runs one commit of the coupling, recorded in the tracked file
-``configs/coupling_pin.yaml``. ``check_pin()`` stops when the coupling clone
-(``coupling_repo`` of ``configs/local.yaml``) is at another commit or has local
+``config/coupling_pin.yaml``. ``check_pin()`` stops when the coupling clone
+(``coupling_repo`` of ``config/local.yaml``) is at another commit or has local
 changes. ``run_case()`` checks the pin, runs the coupling's ``run_case.py`` with
 ``coupling_python`` from the clone, and checks the pin again after the run, which
 shows that the run wrote nothing tracked or untracked in the clone.
 
 Run from the repository::
 
-    uv run python -m dxsew.coupling --case <case.yaml> --settings <folder> [--season summer|winter] [--log <file>]         [--phase <id>] [--no-check]
-    uv run python -m dxsew.coupling --check-only
+    uv run python -m dxsew.runs.coupling --case <case.yaml> --settings <folder> [--season summer|winter] [--log <file>]         [--phase <id>] [--no-check] [--setup <id>]
+    uv run python -m dxsew.runs.coupling --check-only
 
 ``--phase <id>`` runs one phase of the coupling's phase order instead of all of
 them. ``--no-check`` skips both pin checks; the caller then checks the pin
@@ -32,6 +32,9 @@ from pathlib import Path
 
 import yaml
 
+from dxsew import config
+from dxsew.config import find_configs, load_runtime
+
 PIN_FILE = "coupling_pin.yaml"
 SEASONS = ("summer", "winter")
 
@@ -41,11 +44,8 @@ class PinError(RuntimeError):
 
 
 def _configs() -> Path:
-    here = Path.cwd().resolve()
-    for folder in (here, *here.parents):
-        if (folder / "config" / PIN_FILE).is_file():
-            return folder / "config"
-    raise FileNotFoundError(f"config/{PIN_FILE} not found in {here} or any folder above it.")
+    """The ``config`` folder of the project (``dxsew.config.find_configs``)."""
+    return find_configs()
 
 
 def read_pin(path: Path | None = None) -> dict:
@@ -60,7 +60,7 @@ def read_pin(path: Path | None = None) -> dict:
 
 
 def read_local(path: Path | None = None) -> dict:
-    """``coupling_repo`` and ``coupling_python`` of ``configs/local.yaml``."""
+    """``coupling_repo`` and ``coupling_python`` of ``config/local.yaml``."""
     path = Path(path) if path else _configs() / "local.yaml"
     with path.open(encoding="utf-8") as handle:
         local = yaml.safe_load(handle) or {}
@@ -95,7 +95,7 @@ def check_pin(repo: Path, pin: dict | None = None) -> str:
         lines = status.strip().splitlines()
         raise PinError(
             f"The coupling clone {repo} has local changes ({len(lines)} paths), for example:\n  "
-            + "\n  ".join(lines[:10])
+            + "\n  ".join(lines[: load_runtime()["pin_status_lines"]])
             + "\nRun the coupling only from a clean clone at the pinned commit."
         )
     return head
@@ -183,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-check", action="store_true",
                         help="skip both pin checks; the caller checks the pin around a batch")
     parser.add_argument("--check-only", action="store_true", help="check the pin and run nothing")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
     local = read_local()
     if args.check_only:
         print(f"pin ok: {check_pin(Path(local['coupling_repo']))}")

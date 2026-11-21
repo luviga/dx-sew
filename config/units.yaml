@@ -1,0 +1,61 @@
+# Unit conversions and calendar facts, each with its definition and source.
+# These hold for every setup. NIST Special Publication 811, Guide for the Use
+# of the International System of Units: https://www.nist.gov/pml/special-publication-811
+# (B.9: Appendix B.9, Factors for units listed by kind of quantity,
+# https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b9 ;
+# Table 5: SI prefixes, chapter 4,
+# https://www.nist.gov/pml/special-publication-811/nist-guide-si-chapter-4-two-classes-si-units-and-si-prefixes ;
+# Table 6: units accepted for use with the SI, chapter 5,
+# https://www.nist.gov/pml/special-publication-811/nist-guide-si-chapter-5-units-outside-si ).
+
+# Length units an OpenDSS Line accepts (https://opendss.epri.com/Units.html:
+# "none | mi | kft | km | m | Ft | in | cm"), as kilometres per unit.
+# B.9, Length, exact factors: foot 0.3048 m, inch 0.0254 m, mile 1609.344 m;
+# Table 5: kilo 10^3, centi 10^-2. kft is 1000 ft.
+length_km_per_unit:
+  mi: 1.609344
+  kft: 0.3048
+  km: 1.0
+  m: 0.001
+  ft: 0.0003048
+  in: 0.0000254
+  cm: 0.00001
+
+# Decimal gigabyte, the unit of every GB column: Table 5, giga 10^9.
+bytes_per_gb: 1.0e+9
+
+# Kilowatts per megawatt: Table 5, kilo 10^3 and mega 10^6.
+kw_per_mw: 1000.0
+
+# Mean radius of the Earth, R1 = (2a + b) / 3 of the GRS 80 ellipsoid, in km:
+# H. Moritz, "Geodetic Reference System 1980", Journal of Geodesy 74 (2000)
+# 128-133, https://doi.org/10.1007/s001900050278
+earth_radius_km: 6371.0088
+earth_radius_km_assumption: "ASSUMPTION: the mean Earth radius R1 of GRS 80 is 6371.0088 km, as cited from Moritz (2000); the publisher's page could not be opened when this value was moved out of the code, so the figure was not read again at its source."
+
+# Degrees in half a turn (pi radians): Table 6, 1 degree = (pi/180) rad.
+degrees_per_half_turn: 180
+
+# Calendar: Table 6, 1 min = 60 s, 1 h = 60 min, 1 d = 24 h.
+minutes_per_hour: 60
+hours_per_day: 24
+
+# Points of the building files and of the coupling's calendar: 15-minute
+# intervals ("Results timestamps are 15-minute period-ending in EST", End Use
+# Load Profiles README, section "Units and timestamps",
+# https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/README.md),
+# so 60 / 15 = 4 points per hour. The loader checks
+# minutes_per_point * points_per_hour = minutes_per_hour.
+minutes_per_point: 15
+points_per_hour: 4
+
+# Square of the line-to-line over line-to-neutral voltage of a balanced
+# three-phase wye. Rule: the phase-to-phase phasor is the difference of two
+# unit phasors 120 degrees apart, |1 - exp(-j 2 pi / 3)|^2 = 3; the code takes
+# its square root.
+wye_voltage_ratio_squared: 3.0
+
+# Digits of a state FIPS code (01 to 56), the first part of a five-digit
+# county GEOID: U.S. Census Bureau, "State FIPS codes",
+# https://www2.census.gov/geo/docs/reference/state.txt
+fips_state_digits: 2

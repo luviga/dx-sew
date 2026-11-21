@@ -7,7 +7,7 @@ underscore field of the name as the building number and, in phase 7c, compares i
 with the integer digits of the name, so a zone ending stops the run. While staging,
 every load shape name becomes digits only: the released digits followed by the
 two-digit code of its zone ending, from the tracked table
-``configs/texas_zone_codes.csv``. ``res_kw_9312-North_pu`` becomes ``res_kw_931204_pu``
+``inputs/smartds_zone_codes.csv`` (setup key ``inputs.zone_codes``). ``res_kw_9312-North_pu`` becomes ``res_kw_931204_pu``
 when ``North`` has code ``04``, and its parquet becomes ``res_931204.parquet``.
 
 This module holds the name patterns, the zone code table, the name map, the
@@ -23,6 +23,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from dxsew.config import load_runtime
+
 ZONE = r"[A-Za-z]+(?:-[A-Za-z]+)*"
 # Load shape name of the release, anchored at both ends.
 LOADSHAPE = re.compile(rf"^(?P<type>res|com)_(?P<qty>kw|kvar)_(?P<digits>\d+)(?:-(?P<zone>{ZONE}))?_pu$")
@@ -33,7 +35,9 @@ TOKEN_CHARS = rb"A-Za-z0-9_\-"
 # A token that looks like a load shape name: it starts with res_ or com_, any case.
 SHAPE_LIKE = re.compile(rb"(?<![" + TOKEN_CHARS + rb"])(?i:res|com)_[" + TOKEN_CHARS + rb"]*")
 NO_ENDING_CODE = "00"
-CODE_WIDTH = 2
+CODE_WIDTH = len(NO_ENDING_CODE)
+LARGEST_CODE = int("9" * CODE_WIDTH)
+PROFILE_SUFFIX = ".csv"  # a released profile is <load shape name>.csv
 ZONE_CODE_COLUMNS = ("zone_ending", "code")
 MAP_COLUMNS = (
     "released_name",
@@ -87,7 +91,7 @@ def endings_in_release(keys) -> list[str]:
     endings: set[str] = set()
     for key in keys:
         base = str(key).rsplit("/", 1)[-1]
-        stem = base[:-4] if base.endswith(".csv") else None
+        stem = base[: -len(PROFILE_SUFFIX)] if base.endswith(PROFILE_SUFFIX) else None
         found = PARQUET.match(base) or (LOADSHAPE.match(stem) if stem else None)
         if found and found["zone"]:
             endings.add(found["zone"])
@@ -99,7 +103,7 @@ def extend_zone_codes(table: dict[str, str], endings) -> dict[str, str]:
 
     Codes already in ``table`` keep their meaning. A new ending takes the next
     free code, new endings in sorted order. The empty ending has code ``00``.
-    Stops when more than 99 endings would need a code.
+    Stops when more endings need a code than codes of ``CODE_WIDTH`` digits exist.
     """
     table = dict(table)
     table.setdefault("", NO_ENDING_CODE)
@@ -109,9 +113,9 @@ def extend_zone_codes(table: dict[str, str], endings) -> dict[str, str]:
     for ending in sorted(set(endings) - set(table)):
         if "_" in ending:
             raise NameFormError(f"zone ending {ending!r} holds an underscore")
-        free = next((n for n in range(1, 10**CODE_WIDTH) if n not in used), None)
+        free = next((n for n in range(1, LARGEST_CODE + 1) if n not in used), None)
         if free is None:
-            raise NameFormError(f"more than {10**CODE_WIDTH - 1} zone endings; no free two-digit code")
+            raise NameFormError(f"more than {LARGEST_CODE} zone endings; no free two-digit code")
         table[ending] = f"{free:0{CODE_WIDTH}d}"
         used.add(free)
     return table
@@ -278,7 +282,7 @@ def replace_tokens(data: bytes, mapping: dict[bytes, bytes]) -> bytes:
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
+        for block in iter(lambda: handle.read(load_runtime()["hash_block_bytes"]), b""):
             digest.update(block)
     return digest.hexdigest()
 
@@ -304,7 +308,7 @@ def load_totals(data: bytes) -> tuple[int, float]:
     count, total = 0, 0.0
     for line in data.decode("utf-8", errors="replace").splitlines():
         parts = line.split()
-        if len(parts) >= 2 and parts[0].lower() == "new" and parts[1].lower().startswith("load."):
+        if len(parts) > 1 and parts[0].lower() == "new" and parts[1].lower().startswith("load."):
             count += 1
             found = re.search(r"(?i)\bkw\s*=\s*([0-9.eE+-]+)", line)
             total += float(found.group(1)) if found else 0.0
@@ -408,32 +412,37 @@ def staged_parquets(staged: Path) -> set[str]:
         if path.name.lower() != "loads.dss":
             continue
         for value in re.findall(rb"(?i)\byearly\s*=\s*([" + TOKEN_CHARS + rb"]+)", path.read_bytes()):
-            parts = value.decode("ascii", errors="replace").split("_")
-            if len(parts) >= 3:
-                names.add(f"{parts[0]}_{parts[2]}.parquet")
+            try:
+                kind, _, number, *_ = value.decode("ascii", errors="replace").split("_")
+            except ValueError:  # fewer than three underscore fields
+                continue
+            names.add(f"{kind}_{number}.parquet")
     return names
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Write or extend ``configs/texas_zone_codes.csv`` from the saved listing of the release.
+    """Write or extend the zone code table (setup key ``inputs.zone_codes``) from the saved listing of the release.
 
     Run from the repository::
 
-        uv run python -m dxsew.texas.names
+        uv run python -m dxsew.sources.smartds_names [--setup <id>]
 
     Codes already in the table keep their meaning; a new ending takes the next free code.
     """
     import argparse
 
-    from dxsew.config import Paths, find_configs, load_local, load_sample_settings
+    from dxsew import config
+    from dxsew.config import Paths, input_path, load_local, load_sample_settings
     from dxsew.frame.sample import get_listing
 
     parser = argparse.ArgumentParser(description="Write or extend the zone code table from the listing.")
-    parser.parse_args(argv)
+    config.add_setup_argument(parser)
+    args = parser.parse_args(argv)
+    config.use_setup(args.setup)
     settings = load_sample_settings()
     paths = Paths(load_local(), settings)
     listing = get_listing(settings, paths, refresh=False)
-    path = find_configs().parent / "inputs" / "smartds_zone_codes.csv"
+    path = input_path(settings["inputs"]["zone_codes"])
     table = read_zone_codes(path) if path.is_file() else {}
     endings = endings_in_release(listing["key"])
     print(f"zone endings in the release: {len(endings)}: {', '.join(endings)}")

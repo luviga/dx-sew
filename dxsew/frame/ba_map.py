@@ -6,7 +6,7 @@ the settings (``ERCO`` for ERCOT, whose map polygons are ``ERCO-C``,
 ``ERCO-E``, ``ERCO-FW``, ``ERCO-N``, ``ERCO-NC``, ``ERCO-S``, ``ERCO-SC`` and
 ``ERCO-W``). Another balancing area uses the same rule with another prefix.
 
-Source of the map (the URL is a setting in ``configs/texas_sample.yaml``):
+Source of the map (the URL is a setting of the setup, ``geography.balancing_area_map``):
 PyPSA-USA, ``workflow/repo_data/geospatial/BA_shapes_new/Modified_BE_BA_Shapes``,
 https://github.com/PyPSA/pypsa-usa/tree/3d67e2061e02a5b983ed9807a1b2668e7fdf6fd4/workflow/repo_data/geospatial/BA_shapes_new
 (MIT license; Tehranchi et al., Environmental Research Letters, volume 21;
@@ -30,14 +30,15 @@ from shapely import STRtree
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
+from dxsew import config
+from dxsew.config import load_runtime, load_units
+
 NONE, OVERLAP = "none", "overlap"
 BA_FIELD = "BA"  # field of the map that names the balancing area of a record
 
-# Mean radius of the Earth, R1 = (2a + b) / 3 of the GRS 80 ellipsoid, in km:
-# H. Moritz, "Geodetic Reference System 1980", Journal of Geodesy 74 (2000)
-# 128-133, https://doi.org/10.1007/s001900050278
-EARTH_RADIUS_KM = 6371.0088
-KM_PER_DEGREE = EARTH_RADIUS_KM * math.pi / 180
+# Mean radius of the Earth in km and degrees in half a turn: config/units.yaml.
+EARTH_RADIUS_KM = load_units()["earth_radius_km"]
+KM_PER_DEGREE = EARTH_RADIUS_KM * math.pi / load_units()["degrees_per_half_turn"]
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ def map_files(source: dict, folder: Path) -> tuple[Path, list[tuple[str, Path]]]
     stem = url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     base = url.rsplit(".", 1)[0]
     target = Path(folder) / source["folder"]
-    files = [(url, target / f"{stem}.shp")]
+    files = [(url, target / url.rsplit("/", 1)[-1])]
     files += [(base + ending, target / f"{stem}{ending}") for ending in source["companions"]]
     return files[0][1], files
 
@@ -94,9 +95,8 @@ def containing(xs, ys, areas: list[Area]) -> list[list[str]]:
     A point on a polygon edge counts as inside it. Two records with the same
     name count as one area. A point with a missing coordinate is in none.
 
-    ASSUMPTION (kept from the county assignment, ``geo.assign_counties``): the
-    bus coordinates of the release are longitude and latitude in WGS84 degrees
-    and are set against the NAD83 polygons of the map with no datum shift.
+    The coordinates are read as in the setup's sentence
+    ``geography.balancing_area_map.coordinates``.
     """
     tree = STRtree([area.polygon for area in areas])
     found: list[list[str]] = []
@@ -153,7 +153,7 @@ def nearest(lon: float, lat: float, areas: list[Area], keep=lambda area: True) -
         return "", float("nan")
     point = Point(lon, lat)
     degrees = [area.polygon.distance(point) for area in chosen]
-    limit = min(degrees) / math.cos(math.radians(lat)) + 1e-9
+    limit = min(degrees) / math.cos(math.radians(lat)) + load_runtime()["nearest_slack_degrees"]
     best = ("", float("inf"))
     for area, degree in zip(chosen, degrees):
         if degree <= limit:

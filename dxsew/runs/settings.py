@@ -1,12 +1,12 @@
-"""Settings folder of the coupling for staged Texas substations (decision K53).
+"""Settings folder of the coupling for staged substations (decision K53).
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.settings --stamp <stamp> --runs-root <folder> \\
+    uv run python -m dxsew.runs.settings --stamp <stamp> --runs-root <folder> \\
         --base-local <coupling local.yaml> [--extra-local <yaml> --extra-key <key> ...] \\
-        --days <csv> [--substation <subregion>/<substation> ...]
+        --days <csv> [--substation <subregion>/<substation> ...] [--setup <id>]
 
-Writes ``<data_root>/texas/coupling_settings_<stamp>/`` with the files that
+Writes ``<data_root>/<output_folder>/coupling_settings_<stamp>/`` with the files that
 ``run_case.py --settings <folder>`` of DeltaE/dss-eulp-coupling merges over the
 repository's own (README, "Settings from a caller"):
 
@@ -17,7 +17,7 @@ repository's own (README, "Settings from a caller"):
 - ``given_days.csv``: columns ``Feeder``, ``Season``, ``Month``, ``Day``, one row per
   feeder and season (README, "Peak-day rules").
 
-and one case file per substation in ``<data_root>/texas/cases_<stamp>/``. The
+and one case file per substation in ``<data_root>/<output_folder>/cases_<stamp>/``. The
 circuit root of an entry is ``<smart_ds_base>/<smart_ds_relpath>/<circuit_folder>``
 and its parquet root ``<smart_ds_base>/<parquet_relpath>`` (``run_case.py``,
 ``resolve_case``). Machine paths go only into these generated files.
@@ -33,7 +33,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from dxsew.config import Paths, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, load_local, load_runtime, load_sample_settings
 from dxsew.frame.frame import FEEDER_FILES
 from dxsew.runs.stage import substation_folder
 
@@ -59,7 +60,7 @@ def registry_entry(unit: dict, settings: dict) -> dict:
     """Registry entry of one staged substation (``unit`` is its sample row)."""
     staging, coupling = settings["staging"], settings["coupling"]
     description = (
-        f"SMART-DS v0.9 Full Texas {unit['subregion']} {unit['substation']}, "
+        f"{settings['release']['description']} {unit['subregion']} {unit['substation']}, "
         f"{unit['county']} County, {unit['zone']}: "
         f"{int(unit['feeders'])} feeders, {int(unit['loads'])} loads"
     )
@@ -135,7 +136,7 @@ def local_settings(base: dict, extra: dict, runs_root: Path) -> dict:
 
 def _dump(data: dict, path: Path) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as handle:
-        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True, width=1000)
+        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True, width=load_runtime()["yaml_width"])
 
 
 def write_settings_folder(units: list[dict], settings: dict, folder: Path, local: dict,
@@ -149,12 +150,13 @@ def write_settings_folder(units: list[dict], settings: dict, folder: Path, local
             for unit in units
         }
     }
-    written = [folder / "local.yaml", folder / "topology_registry.yaml", folder / "pipeline_config.yaml",
-               folder / "given_days.csv"]
-    _dump(local, written[0])
-    _dump(registry, written[1])
-    _dump({"peak_day_rule": "given"}, written[2])
-    with written[3].open("w", encoding="utf-8", newline="") as handle:
+    local_path, registry_path, pipeline_path, days_path = written = [
+        folder / "local.yaml", folder / "topology_registry.yaml", folder / "pipeline_config.yaml",
+        folder / "given_days.csv"]
+    _dump(local, local_path)
+    _dump(registry, registry_path)
+    _dump({"peak_day_rule": "given"}, pipeline_path)
+    with days_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(GIVEN_DAYS_COLUMNS)
         writer.writerows(days.itertuples(index=False, name=None))
@@ -191,12 +193,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="CSV of Season,Month,Day (every feeder) or Feeder,Season,Month,Day")
     parser.add_argument("--substation", action="append", default=[],
                         help="<subregion>/<substation> to include; default every staged substation")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
 
     settings = load_sample_settings()
     paths = Paths(load_local(), settings)
-    sample = pd.read_csv(paths.texas / f"sample_{args.stamp}.csv")
-    staging = pd.read_csv(paths.texas / f"staging_{args.stamp}.csv")
+    sample = pd.read_csv(paths.output / f"sample_{args.stamp}.csv")
+    staging = pd.read_csv(paths.output / f"staging_{args.stamp}.csv")
     units = staged_units(sample, staging)
     if args.substation:
         wanted = {tuple(item.split("/", 1)) for item in args.substation}
@@ -211,9 +215,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"keys not in {args.extra_local}: {', '.join(missing)}")
     local = local_settings(_read_yaml(args.base_local), {k: extra_source[k] for k in args.extra_key}, args.runs_root)
     days = given_days(pd.read_csv(args.days), feeders)
-    folder = paths.texas / f"coupling_settings_{args.stamp}"
+    folder = paths.output / f"coupling_settings_{args.stamp}"
     written = write_settings_folder(units, settings, folder, local, days)
-    written += write_cases(units, settings, paths.texas / f"cases_{args.stamp}")
+    written += write_cases(units, settings, paths.output / f"cases_{args.stamp}")
     print(f"{len(units)} staged substations, {len(feeders)} feeders, {len(days)} given days")
     for path in written:
         print(path)

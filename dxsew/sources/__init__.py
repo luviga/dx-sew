@@ -1,4 +1,4 @@
-"""External data sources. Every URL is read from configs/sources.yaml."""
+"""External data sources. Every URL is read from config/sources.yaml."""
 
 from __future__ import annotations
 
@@ -9,14 +9,16 @@ from urllib.parse import unquote, urlparse
 import requests
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SOURCES_YAML = REPO_ROOT / "config" / "sources.yaml"
+from dxsew.config import find_configs, load_runtime
+
+SOURCES_YAML = find_configs() / "sources.yaml"
 USER_AGENT = "dxsew-data-client"
-TRIES = 3
+RUNTIME = load_runtime()["download"]
+TRIES = RUNTIME["tries"]
 
 
 def load_sources(path: Path | str = SOURCES_YAML) -> dict:
-    """Return the source table of configs/sources.yaml."""
+    """Return the source table of config/sources.yaml."""
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -29,12 +31,12 @@ def _server_size(url: str) -> int | None:
     """Size in bytes the server reports for url, or None if it reports none."""
     for attempt in range(TRIES):
         try:
-            r = requests.head(url, allow_redirects=True, timeout=60, headers={"User-Agent": USER_AGENT})
+            r = requests.head(url, allow_redirects=True, timeout=RUNTIME["head_timeout_s"], headers={"User-Agent": USER_AGENT})
             if r.ok and "Content-Length" in r.headers:
                 return int(r.headers["Content-Length"])
         except requests.RequestException:
             pass
-        time.sleep(2 * (attempt + 1))
+        time.sleep(RUNTIME["head_pause_step_s"] * (attempt + 1))
     return None
 
 
@@ -44,7 +46,7 @@ def download(url: str, folder: Path | str, log=print) -> Path:
     The file is written to a temporary name and renamed when complete. If the
     target already exists with the size the server reports, it is reused. If the
     server reports no size, an existing file is reused and a note is logged.
-    Raises RuntimeError after three failed tries.
+    Raises RuntimeError after ``download.tries`` failed tries (config/runtime.yaml).
     """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
@@ -61,10 +63,10 @@ def download(url: str, folder: Path | str, log=print) -> Path:
     last_error: Exception | None = None
     for attempt in range(TRIES):
         try:
-            with requests.get(url, stream=True, timeout=300, headers={"User-Agent": USER_AGENT}) as r:
+            with requests.get(url, stream=True, timeout=RUNTIME["get_timeout_s"], headers={"User-Agent": USER_AGENT}) as r:
                 r.raise_for_status()
                 with open(tmp, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=1 << 20):
+                    for chunk in r.iter_content(chunk_size=RUNTIME["chunk_bytes"]):
                         f.write(chunk)
             got = tmp.stat().st_size
             if size is not None and got != size:
@@ -75,7 +77,7 @@ def download(url: str, folder: Path | str, log=print) -> Path:
         except (requests.RequestException, RuntimeError) as e:
             last_error = e
             log(f"try {attempt + 1} of {TRIES} failed for {url}: {e}")
-            time.sleep(5 * (attempt + 1))
+            time.sleep(RUNTIME["get_pause_step_s"] * (attempt + 1))
     if tmp.exists():
         tmp.unlink()
     raise RuntimeError(f"download failed after {TRIES} tries: {url}: {last_error}")

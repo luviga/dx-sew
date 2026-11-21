@@ -35,15 +35,17 @@ the state of the county:
 A utility the lookups do not resolve stays unknown and blocks the veto, as
 in K57. With the lookups off the veto is K57 exactly.
 
-Report-only CLI, for one area of ``configs/veto_areas.yaml`` and with no
-SMART-DS data::
+Report-only CLI, for one area of ``config/areas.yaml`` and with no
+SMART-DS data; the source files and the output folder are the block
+``veto_report`` of the setup::
 
-    uv run python -m dxsew.veto --areas configs/veto_areas.yaml --area CAISO --stamp <stamp>
+    uv run python -m dxsew.frame.veto --areas config/areas.yaml --area CAISO --stamp <stamp> [--setup <id>]
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import re
 import sys
@@ -58,6 +60,7 @@ import yaml
 from shapely import make_valid, unary_union
 from shapely.geometry import shape
 
+from dxsew import config
 from dxsew.sources.eia861 import read_sales
 
 # Reasons of the veto table (decision K57), one per county.
@@ -73,9 +76,9 @@ REPORTS_RTO, MISSING_ROW, NO_RTO_MARKED, IGNORED_MARK_ONLY = (
 ROW, OTHER_STATE_ROW, SALES_BA_CODE, UNKNOWN = "row", "other_state_row", "sales_ba_code", "unknown"
 BA_MARK = "BA:"  # prefix of a mark read from a balancing authority code of the sales rows
 
-# Short form file of EIA-861 and its sheet, read beside the sales file for
-# the balancing authority code of the utilities that file the short form.
-SHORT_FORM_FILE, SHORT_FORM_SHEET = "Short_Form_{year}.xlsx", "861S"
+# The short form file of EIA-861 and its sheet, read beside the sales file for
+# the balancing authority code of the utilities that file the short form, are
+# keys of the block eia861 of the setup (short_form_file, short_form_sheet).
 
 
 # Readers of the EIA-861 sheets.
@@ -161,16 +164,18 @@ def _code(value) -> str | None:
     return text if text and text != "." else None
 
 
-def short_form_rows(zip_path: Path, year: int) -> pd.DataFrame | None:
+def short_form_rows(zip_path: Path, year: int, layout: dict | None = None) -> pd.DataFrame | None:
     """``utility_number``, ``state``, ``ba_code`` of the short form file, or ``None`` when absent.
 
-    ``None`` also when the file has no ``BA Code`` column.
+    ``None`` also when the file has no ``BA Code`` column. ``layout`` is the
+    block ``eia861`` of a setup (default: the setup of the process).
     """
-    member = SHORT_FORM_FILE.format(year=year)
+    layout = layout or config.setup()["eia861"]
+    member = layout["short_form_file"].format(year=year)
     with zipfile.ZipFile(zip_path) as archive:
         if member not in archive.namelist():
             return None
-    raw = _sheet(zip_path, member, SHORT_FORM_SHEET, 0)
+    raw = _sheet(zip_path, member, layout["short_form_sheet"], 0)
     if "BA Code" not in raw:
         return None
     rows = raw.rename(columns={"Utility Number": "utility_number", "State": "state", "BA Code": "ba_code"})
@@ -379,7 +384,7 @@ def lookup_settings(source: dict) -> tuple[bool, str | None]:
     if lookups and not ba_code:
         raise KeyError(
             "veto_lookups is on but ba_code is missing: give the balancing authority code of the "
-            "area on the EIA-861 sales rows (for example ERCO, CISO, NYIS)."
+            "area on the EIA-861 sales rows (the ba_code of its entry in config/areas.yaml)."
         )
     return lookups, ba_code
 
@@ -496,22 +501,12 @@ def lookup_table(zip_path: Path, source: dict, sales_year: int) -> pd.DataFrame:
 
 # Report-only run for one area (no SMART-DS data).
 
-# State FIPS codes by postal code, the field STATEFP of the TIGER/Line county
-# file. Source: U.S. Census Bureau, "State FIPS codes",
-# https://www2.census.gov/geo/docs/reference/state.txt
-STATE_FIPS = {
-    "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09", "DE": "10",
-    "DC": "11", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18", "IA": "19",
-    "KS": "20", "KY": "21", "LA": "22", "ME": "23", "MD": "24", "MA": "25", "MI": "26", "MN": "27",
-    "MS": "28", "MO": "29", "MT": "30", "NE": "31", "NV": "32", "NH": "33", "NJ": "34", "NM": "35",
-    "NY": "36", "NC": "37", "ND": "38", "OH": "39", "OK": "40", "OR": "41", "PA": "42", "RI": "44",
-    "SC": "45", "SD": "46", "TN": "47", "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53",
-    "WV": "54", "WI": "55", "WY": "56",
-}
-# ASSUMPTION, for this report only: a county is "in the map area" when at
-# least half of its area lies in polygons whose name starts with ba_prefix.
-# The value is not taken from a source; it only sorts counties into classes.
-SHARE_THRESHOLD = 0.5
+def state_fips(path: Path) -> dict[str, str]:
+    """State FIPS codes by postal code from the table of the setup key ``inputs.state_fips``."""
+    with Path(path).open(encoding="utf-8", newline="") as handle:
+        return {row["postal_code"]: row["fips"] for row in csv.DictReader(handle)}
+
+
 REPORT_COLUMNS = [
     "state", "county_eia", "county", "county_geoid", "share_in_area", "reason_k57", "vetoed_k57",
     "reason", "vetoed", "utility_marks", "class",
@@ -535,10 +530,8 @@ def read_shapes(shp_path: Path, key: str, keep=lambda record: True) -> list[tupl
 def area_shares(counties: list[tuple[dict, object]], polygons: list) -> list[float]:
     """Share of each county's area that lies inside the union of ``polygons``.
 
-    ASSUMPTION: shares are computed on longitude and latitude degrees, not on
-    an equal-area projection. Within one county the two differ by a
-    negligible amount, since the scale of a degree of longitude changes
-    little across a county.
+    Shares are computed on longitude and latitude degrees (the setup's
+    sentence ``veto_report.area_shares``).
     """
     union = unary_union([make_valid(p) for p in polygons]) if polygons else None
     shares = []
@@ -551,9 +544,10 @@ def area_shares(counties: list[tuple[dict, object]], polygons: list) -> list[flo
     return shares
 
 
-def report_class(share: float, vetoed: bool, reads_as_area: bool) -> str:
-    """Class of a county in the report (``SHARE_THRESHOLD``, an ASSUMPTION, splits in from out)."""
-    if share >= SHARE_THRESHOLD:
+def report_class(share: float, vetoed: bool, reads_as_area: bool, threshold: float | None = None) -> str:
+    """Class of a county in the report; the setup's ``veto_report.share_threshold`` splits in from out."""
+    threshold = config.setup()["veto_report"]["share_threshold"] if threshold is None else threshold
+    if share >= threshold:
         return "map_in_veto_out" if vetoed else "map_in_kept"
     return "map_out_utilities_in" if reads_as_area else "map_out"
 
@@ -563,6 +557,7 @@ def area_report(
     counties_by_state: dict[str, list[tuple[dict, object]]],
     polygons: list,
     area: dict,
+    report: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """County table, lookup table and notes of one area (report only).
 
@@ -570,8 +565,10 @@ def area_report(
     (``read_inputs`` with the lookups on), ``counties_by_state`` the Census
     counties of each state (records with ``GEOID`` and ``NAME``), and
     ``polygons`` the map polygons whose name starts with ``ba_prefix``.
-    Counties are joined by state and ``name_key``.
+    Counties are joined by state and ``name_key``. ``report`` is the block
+    ``veto_report`` of a setup (default: the setup of the process).
     """
+    report = report or config.setup()["veto_report"]
     rto, ba_code, ignore = area["rto"], area["ba_code"], area.get("veto_ignore_marks", [])
     tables, lookups, notes = [], [], {"eia_counties_not_in_census": [], "census_counties_not_in_eia": []}
     for state in area["states"]:
@@ -588,10 +585,10 @@ def area_report(
         table.insert(0, "state", state)
         table["county"] = table["county_key"].map(lambda k: census[k]["NAME"] if k in census else None)
         table["county_geoid"] = table["county_key"].map(lambda k: census[k]["GEOID"] if k in census else None)
-        table["share_in_area"] = table["county_key"].map(shares).round(6)
+        table["share_in_area"] = table["county_key"].map(shares).round(report["share_decimals"])
         reads = {c: any(a.marks is not None and rto in a.marks for a in found) for c, found in answers.items()}
         table["class"] = [
-            report_class(0.0 if pd.isna(s) else s, bool(v), reads[c])
+            report_class(0.0 if pd.isna(s) else s, bool(v), reads[c], report["share_threshold"])
             for s, v, c in zip(table["share_in_area"], table["vetoed"], table["county_eia"])
         ]
         notes["eia_counties_not_in_census"] += [f"{state} {c}" for c in table.loc[table["county"].isna(), "county_eia"]]
@@ -626,26 +623,28 @@ def _need(path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report-only EIA-861 veto for one balancing area.")
-    parser.add_argument("--areas", required=True, help="settings of the areas, configs/veto_areas.yaml")
+    parser.add_argument("--areas", default=str(config.find_configs() / "areas.yaml"),
+                        help="settings of the areas, default config/areas.yaml")
     parser.add_argument("--area", required=True, help="name of one area of the settings")
     parser.add_argument("--stamp", default=None, help="UTC stamp of the output names; default now")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
 
     areas_path = Path(args.areas).resolve()
-    configs = areas_path.parent
-    settings = _read_yaml(areas_path)
-    by_name = {entry["name"]: entry for entry in settings["areas"]}
+    by_name = {entry["name"]: entry for entry in config.load_areas(areas_path)}
     if args.area not in by_name:
         raise KeyError(f"No area {args.area!r} in {areas_path}; areas: {', '.join(by_name)}.")
     area = by_name[args.area]
-    sources = settings["sources"]
-    shared = _read_yaml(configs / sources["settings_file"])
+    shared = config.setup()
+    sources = shared["veto_report"]
     eia = dict(_settings_at(shared, sources["eia861"]))
     census = _settings_at(shared, sources["counties"])
     map_source = _settings_at(shared, sources["map"])
-    data_root = Path(_read_yaml(configs / "local.yaml")["data_root"])
+    data_root = Path(_read_yaml(areas_path.parent / "local.yaml")["data_root"])
     stamp = args.stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    year = int(sources["eia861_year"])
+    year = int(shared["eia861"]["year"])
+    fips_of = state_fips(config.input_path(shared["inputs"]["state_fips"]))
 
     eia_zip = _need(data_root / "eia" / eia["url"].rsplit("/", 1)[-1])
     county_zip = _need(data_root / "census" / census["url"].rsplit("/", 1)[-1])
@@ -655,15 +654,15 @@ def main(argv: list[str] | None = None) -> int:
     for state in area["states"]:
         source = {**eia, "state": state, "rto": area["rto"]}
         inputs_by_state[state] = read_inputs(eia_zip, source, year, True)
-        fips = STATE_FIPS[state]
+        fips = fips_of[state]
         counties_by_state[state] = sorted(
             read_shapes(county_zip, "STATEFP", lambda r, f=fips: r["STATEFP"] == f), key=lambda item: item[0]["GEOID"]
         )
     prefix = area["ba_prefix"]
     polygons = [g for r, g in read_shapes(shp, "BA") if str(r["BA"]).strip().startswith(prefix)]
-    report, lookups, notes = area_report(inputs_by_state, counties_by_state, polygons, area)
+    report, lookups, notes = area_report(inputs_by_state, counties_by_state, polygons, area, sources)
 
-    out = data_root / settings["output_folder"]
+    out = data_root / sources["output_folder"]
     out.mkdir(parents=True, exist_ok=True)
     for table, name in ((report, f"veto_area_{area['name']}_{stamp}.csv"), (lookups, f"veto_lookups_{area['name']}_{stamp}.csv")):
         temporary = out / f"{name}.part"

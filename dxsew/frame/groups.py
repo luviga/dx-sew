@@ -2,11 +2,11 @@
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.groups --stamp <stamp> --features-stamp <stamp> \\
-        [--sample-stamp <stamp of sample_<stamp>.csv>]
+    uv run python -m dxsew.frame.groups --stamp <stamp> --features-stamp <stamp> \\
+        [--sample-stamp <stamp of sample_<stamp>.csv>] [--setup <id>]
 
-Reads ``<data_root>/texas/features_<features stamp>.parquet`` (``dxsew.texas.features``)
-and the settings block ``groups`` of ``configs/texas_sample.yaml``.
+Reads ``<data_root>/<output_folder>/features_<features stamp>.parquet`` (``dxsew.frame.features``)
+and the settings block ``groups`` of the setup.
 
 1. Features: the columns of ``groups.features`` in order, ``log(x)`` being the
    natural log of x plus 1. Scaling ``frame_z``: (value minus frame mean)
@@ -49,7 +49,7 @@ and the settings block ``groups`` of ``configs/texas_sample.yaml``.
    group at the dial's k for that target, with the feeder to run: its typical
    feeder, or its placeholder feeder when it has none.
 
-Writes, under ``<data_root>/texas/``: ``groups_<stamp>.parquet`` (stratum, k,
+Writes, under ``<data_root>/<output_folder>/``: ``groups_<stamp>.parquet`` (stratum, k,
 feeder, group), ``group_table_<stamp>.csv``, ``explained_<stamp>.csv``,
 ``dial_<stamp>.csv`` (with the groups that use a placeholder, their
 customer share and the ceiling columns), ``small_groups_<stamp>.csv``, with
@@ -69,7 +69,8 @@ import pandas as pd
 import scipy
 from scipy.cluster.hierarchy import fcluster, linkage
 
-from dxsew.config import Paths, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, load_local, load_runtime, load_sample_settings
 from dxsew.frame.sample import write_csv, write_parquet
 
 LOG = re.compile(r"^log\((\w+)\)$")
@@ -104,7 +105,7 @@ def stable_labels(tree: np.ndarray, cap: int, names: list[str]) -> dict[int, np.
     rank[first] = np.arange(count)
     labels = {1: np.ones(count, dtype=np.int64)}
     previous = labels[1]
-    for k in range(2, cap + 1):
+    for k in range(1, cap + 1)[1:]:
         raw = fcluster(tree, t=k, criterion="maxclust")
         current = np.zeros(count, dtype=np.int64)
         next_number = int(previous.max()) + 1
@@ -484,12 +485,18 @@ def build(features: pd.DataFrame, rule: dict) -> dict:
     return result
 
 
-def gates(result: dict, features: pd.DataFrame) -> dict[str, bool]:
-    """Gates of step 4: nesting, explained, weights and one group per feeder per k."""
+def gates(result: dict, features: pd.DataFrame, rule: dict | None = None) -> dict[str, bool]:
+    """Gates of step 4: nesting, explained, weights and one group per feeder per k.
+
+    The two tolerances are ``gate_zero_tolerance`` and ``gate_weight_sum_tolerance``
+    of ``rule``, the block ``groups`` of a setup (default: the setup of the process).
+    """
+    rule = rule or config.setup()["groups"]
+    zero, weight_sum = rule["gate_zero_tolerance"], rule["gate_weight_sum_tolerance"]
     explained_table = result["explained"].sort_values(["stratum", "k"])
-    at_one = explained_table[explained_table["k"] == 1]["explained"].abs().max() < 1e-12
+    at_one = explained_table[explained_table["k"] == 1]["explained"].abs().max() < zero
     rising = all(
-        (np.diff(part["explained"].to_numpy()) >= -1e-12).all()
+        (np.diff(part["explained"].to_numpy()) >= -zero).all()
         for _, part in explained_table.groupby("stratum")
     )
     sums = result["group_table"].groupby(["stratum", "k"])["starting_weight"].sum()
@@ -504,7 +511,7 @@ def gates(result: dict, features: pd.DataFrame) -> dict[str, bool]:
         "nesting": all(result["nested"].values()),
         "explained_zero_at_k1": bool(at_one),
         "explained_not_decreasing": bool(rising),
-        "weights_sum_to_one": bool(((sums - 1).abs() <= 1e-9).all()),
+        "weights_sum_to_one": bool(((sums - 1).abs() <= weight_sum).all()),
         "one_group_per_feeder_per_k": bool(every_k and per_stratum.sum() == in_grouping),
     }
 
@@ -514,13 +521,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stamp", required=True, help="UTC stamp of the output names")
     parser.add_argument("--features-stamp", required=True, help="stamp of features_<stamp>.parquet")
     parser.add_argument("--sample-stamp", default=None, help="stamp of sample_<stamp>.csv for the check-set candidates")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
     started = time.perf_counter()
 
     settings = load_sample_settings()
     rule = settings["groups"]
     paths = Paths(load_local(), settings)
-    out = paths.texas
+    out = paths.output
     features = pd.read_parquet(out / f"features_{args.features_stamp}.parquet")
     print(f"scipy {scipy.__version__}")
     result = build(features, rule)
@@ -538,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         write_csv(candidates, out / f"check_set_candidates_{args.stamp}.csv")
         print(candidates.to_string(index=False))
 
-    pd.set_option("display.width", 220)
+    pd.set_option("display.width", load_runtime()["print_width"])
     print("scale (frame mean and standard deviation of each feature):")
     print(result["scale"].to_string(index=False))
     left_out = result["left_out"]
@@ -559,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"strata and k with no typical feeder in any group, so no placeholder: {len(no_placeholder)}")
     if len(no_placeholder):
         print(no_placeholder.to_string(index=False))
-    for name, ok in gates(result, features).items():
+    for name, ok in gates(result, features, rule).items():
         print(f"gate {name}: {'pass' if ok else 'FAIL'}")
     print(f"written to {out} with stamp {args.stamp} in {time.perf_counter() - started:.0f} s")
     return 0

@@ -4,7 +4,7 @@ Source: EIA, Hourly Electric Grid Monitor, Six-Month Files
 (https://www.eia.gov/electricity/930-content/about.html). Demand is metered net
 generation inside the balancing area minus metered net interchange, hourly
 integrated, published with the hour-ending convention. The URLs are in
-configs/sources.yaml under eia930_balance_<year>_jan_jun and _jul_dec.
+config/sources.yaml under eia930_balance_<year>_jan_jun and _jul_dec.
 """
 
 from __future__ import annotations

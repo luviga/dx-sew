@@ -12,8 +12,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from dxsew import config
+from dxsew.config import load_units
+
 PROPERTY = re.compile(r"(\S+?)\s*=\s*(\S+)")
 PHASE_COPY = re.compile(r"_[12]$")
+SHAPE_ENDING = "_pu"  # ending of a load shape name of the release
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ def parse_loads(text: str) -> list[Load]:
     loads: list[Load] = []
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("load."):
+        if len(parts) <= 1 or parts[0].lower() != "new" or not parts[1].lower().startswith("load."):
             continue
         values = properties(line)
         phases = values.get("phases")
@@ -72,10 +76,11 @@ def parquet_name(yearly: str) -> str | None:
     ``0_download_smartds/generate_loads_pivot.py`` of DeltaE/dss-eulp-coupling
     (``Parquet_Name``). A name of another form gives ``None``.
     """
-    parts = yearly.split("_", 2)
-    if len(parts) != 3 or parts[1].lower() != "kw" or not parts[2].lower().endswith("_pu"):
+    kind, first, rest = yearly.partition("_")
+    qty, second, tail = rest.partition("_")
+    if not first or not second or qty.lower() != "kw" or not tail.lower().endswith(SHAPE_ENDING):
         return None
-    return f"{parts[0]}_{parts[2][:-3]}.parquet"
+    return f"{kind}_{tail[: -len(SHAPE_ENDING)]}.parquet"
 
 
 def load_references(loads: list[Load]) -> tuple[set[str], int]:
@@ -95,12 +100,10 @@ def parse_buscoords(text: str) -> dict[str, tuple[float, float]]:
     """``bus -> (x, y)`` of a ``Buscoords.dss`` file (blank or comma separated)."""
     coords: dict[str, tuple[float, float]] = {}
     for line in text.splitlines():
-        parts = line.replace(",", " ").split()
-        if len(parts) < 3:
-            continue
         try:
-            coords[parts[0].lower()] = (float(parts[1]), float(parts[2]))
-        except ValueError:
+            bus, x, y, *_ = line.replace(",", " ").split()
+            coords[bus.lower()] = (float(x), float(y))
+        except ValueError:  # fewer than three items, or a value that is not a number
             continue
     return coords
 
@@ -114,7 +117,7 @@ def parse_transformer_kva(text: str) -> list[float]:
     ratings: list[float] = []
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("transformer."):
+        if len(parts) <= 1 or parts[0].lower() != "new" or not parts[1].lower().startswith("transformer."):
             continue
         found = re.search(r"\bkvas?\s*=\s*[\[(\"']?\s*([0-9.eE+-]+)", line, flags=re.IGNORECASE)
         if found:
@@ -122,20 +125,9 @@ def parse_transformer_kva(text: str) -> list[float]:
     return ratings
 
 
-# Length units a Line accepts (OpenDSS, https://opendss.epri.com/Units.html:
-# "none | mi | kft | km | m | Ft | in | cm"), as kilometres per unit. Factors
-# from NIST SP 811 Appendix B.9 (foot 0.3048 m, inch 0.0254 m, mile
-# 1609.344 m, all exact):
-# https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b9
-KM_PER_UNIT = {
-    "mi": 1.609344,
-    "kft": 0.3048,
-    "km": 1.0,
-    "m": 0.001,
-    "ft": 0.0003048,
-    "in": 0.0000254,
-    "cm": 0.00001,
-}
+# Length units a Line accepts, as kilometres per unit: config/units.yaml,
+# length_km_per_unit (OpenDSS units, factors from NIST SP 811).
+KM_PER_UNIT = dict(load_units()["length_km_per_unit"])
 KV_VALUE = re.compile(r"\bkv\s*=\s*([0-9.eE+-]+)", flags=re.IGNORECASE)
 KVS_VALUES = re.compile(r"\bkvs\s*=\s*[\[(\"']([^\])\"']*)", flags=re.IGNORECASE)
 NUMBER = re.compile(r"[0-9.eE+-]+")
@@ -195,20 +187,20 @@ def _array(value: str) -> list[str]:
     return [item for item in re.split(r"[\s,]+", inner) if item]
 
 
-def _windings(row: str) -> tuple[int | None, tuple[Winding, ...]]:
+def _windings(row: str, default_windings: int | None = None) -> tuple[int | None, tuple[Winding, ...]]:
     """Phases and windings of one ``New Transformer.`` line.
 
     Both OpenDSS forms are read (https://opendss.epri.com/Properties16.html):
     ``buses=[...]`` with ``kvs=(...)``, one item per winding, and blocks of
     ``wdg=<n>`` followed by ``bus=`` and ``kv=`` of winding n. ``bus`` and
     ``kv`` before any ``wdg`` belong to winding 1, the active winding of a new
-    transformer. The winding count is the largest of ``windings`` (2 when not
-    given, the OpenDSS default), the highest ``wdg`` and the length of
+    transformer. The winding count is the largest of ``windings`` (the setup's
+    ``release.opendss_default_windings`` when not given), the highest ``wdg`` and the length of
     ``buses`` and ``kvs``. A winding the line gives no bus has bus "" and no
     nodes; one it gives no voltage has ``kv`` None.
     """
     phases = None
-    declared = 2
+    declared = default_windings or config.setup()["release"]["opendss_default_windings"]
     active = 1
     buses: dict[int, str] = {}
     kvs: dict[int, float] = {}
@@ -249,7 +241,7 @@ def parse_lines(text: str) -> list[Line]:
     lines: list[Line] = []
     for row in text.splitlines():
         parts = row.split()
-        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("line."):
+        if len(parts) <= 1 or parts[0].lower() != "new" or not parts[1].lower().startswith("line."):
             continue
         values = properties(row)
         length = values.get("length")
@@ -277,7 +269,7 @@ def line_length_km(line: Line, default_unit: str) -> tuple[float, bool]:
     return line.length * KM_PER_UNIT[default_unit], False
 
 
-def parse_transformers(text: str) -> list[Transformer]:
+def parse_transformers(text: str, default_windings: int | None = None) -> list[Transformer]:
     """One ``Transformer`` per ``New Transformer.`` line of a ``Transformers.dss`` file.
 
     ``kva`` is the rating as in ``parse_transformer_kva`` (None when the line
@@ -289,13 +281,13 @@ def parse_transformers(text: str) -> list[Transformer]:
     found: list[Transformer] = []
     for row in text.splitlines():
         parts = row.split()
-        if len(parts) < 2 or parts[0].lower() != "new" or not parts[1].lower().startswith("transformer."):
+        if len(parts) <= 1 or parts[0].lower() != "new" or not parts[1].lower().startswith("transformer."):
             continue
         ratings = parse_transformer_kva(row)
         kvs = [float(value) for value in KV_VALUE.findall(row)]
         for group in KVS_VALUES.findall(row):
             kvs.extend(float(value) for value in NUMBER.findall(group))
-        phases, windings = _windings(row)
+        phases, windings = _windings(row, default_windings)
         found.append(
             Transformer(
                 name=parts[1].split(".", 1)[1],

@@ -2,19 +2,19 @@
 
 Run from the repository::
 
-    uv run python -m dxsew.texas.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> \\
-        [--previous-sample <csv>]
+    uv run python -m dxsew.runs.stage --stamp <stamp> --max-staging-gb <GB> --min-free-gb <GB> \\
+        [--previous-sample <csv>] [--setup <id>]
 
 For each substation of ``sample_<stamp>.csv``:
 
 1. Released copy. An untouched copy of its released ``opendss`` substation
-   folder is placed in ``<data_root>/texas/released_<stamp>/<subregion>/<substation>/``.
+   folder is placed in ``<data_root>/<output_folder>/released_<stamp>/<subregion>/<substation>/``.
    A folder already staged under the release names is copied when every file
    size matches the listing; otherwise the folder is listed with ListObjectsV2
    and downloaded. The copy is the reference of the checks and is never edited.
 2. Names. Every token of its ``.dss`` files that looks like a load shape name
    is parsed with an anchored pattern (``names.LOADSHAPE``). A token that fits
-   no form, or a zone ending with no code in ``configs/texas_zone_codes.csv``,
+   no form, or a zone ending with no code in the zone code table (``inputs.zone_codes``),
    stops the staging of that substation.
 3. Staged tree. ``<staging>/<subregion>/<opendss_relpath>/<substation>/`` is
    rebuilt from the released copy, every load shape name replaced as a whole
@@ -44,15 +44,16 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from dxsew.config import Paths, find_configs, load_local, load_sample_settings
+from dxsew import config
+from dxsew.config import Paths, input_path, load_local, load_runtime, load_sample_settings
 from dxsew.frame import frame as frame_module
 from dxsew.frame.sample import BYTES_PER_GB, get_listing, write_csv
 from dxsew.sources import oedi
 from dxsew.sources import smartds_dss as dss
 from dxsew.sources import smartds_names as names
 
-ZONE_CODES_NAME = "smartds_zone_codes.csv"
 NAME_MAP_NAME = "name_map.csv"
+DETAIL = load_runtime()["detail_items"]  # failures or names joined into one cell
 
 
 def folder_bytes(folder: Path) -> int:
@@ -99,7 +100,7 @@ def substation_folder(paths: Paths, settings: dict, subregion: str, substation: 
 
 
 def released_folder(paths: Paths, stamp: str, subregion: str, substation: str) -> Path:
-    return paths.texas / f"released_{stamp}" / subregion / substation
+    return paths.output / f"released_{stamp}" / subregion / substation
 
 
 def opendss_items(objects: pd.DataFrame, target: Path) -> list[tuple[str, int, Path]]:
@@ -267,7 +268,7 @@ def stage(sample: pd.DataFrame, listing: pd.DataFrame, settings: dict, paths: Pa
         released = released_folder(paths, stamp, unit.subregion, unit.substation)
         shapes, parquets, problems = names.scan_folder(released)
         if problems:
-            row["note"] = "names that fit no form: " + "; ".join(problems[:20])
+            row["note"] = "names that fit no form: " + "; ".join(problems[:DETAIL])
             continue
         unknown = sorted({s.zone for s in shapes.values()} - set(codes))
         if unknown:
@@ -305,7 +306,7 @@ def stage(sample: pd.DataFrame, listing: pd.DataFrame, settings: dict, paths: Pa
         for check, failures in results.items():
             checks.append({
                 "subregion": unit.subregion, "substation": unit.substation, "check": check,
-                "passed": not failures, "failures": len(failures), "detail": "; ".join(failures[:20]),
+                "passed": not failures, "failures": len(failures), "detail": "; ".join(failures[:DETAIL]),
             })
         row.update(
             staged_files=files, staged_bytes=written, loadshape_names=len(shapes), parquets=len(sha),
@@ -320,7 +321,7 @@ def stage(sample: pd.DataFrame, listing: pd.DataFrame, settings: dict, paths: Pa
                  if r["released_name"] in all_map and all_map[r["released_name"]]["new_name"] != r["new_name"]]
         if clash:
             shutil.rmtree(staged)
-            row["note"] = "name map disagrees with an earlier substation: " + " ".join(clash[:20])
+            row["note"] = "name map disagrees with an earlier substation: " + " ".join(clash[:DETAIL])
             continue
         all_map.update({r["released_name"]: r for r in unit_rows})
         referenced[(unit.subregion, unit.substation)] = set(sha)
@@ -351,7 +352,7 @@ def recheck(sample: pd.DataFrame, settings: dict, paths: Paths, stamp: str, map_
         }
         for check, failures in results.items():
             checks.append({"subregion": unit.subregion, "substation": unit.substation, "check": check,
-                           "passed": not failures, "failures": len(failures), "detail": "; ".join(failures[:20])})
+                           "passed": not failures, "failures": len(failures), "detail": "; ".join(failures[:DETAIL])})
     return pd.DataFrame(checks)
 
 
@@ -388,12 +389,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="sample CSV of an earlier staging, to list substations that left the sample")
     parser.add_argument("--check-only", action="store_true",
                         help="run the four checks again on the staged tree and change nothing")
-    parser.add_argument("--workers", type=int, default=16, help="download threads")
+    parser.add_argument("--workers", type=int, default=load_runtime()["workers"]["stage_threads"], help="download threads")
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
 
     settings = load_sample_settings()
     paths = Paths(load_local(), settings)
-    sample = pd.read_csv(paths.texas / f"sample_{args.stamp}.csv")
+    sample = pd.read_csv(paths.output / f"sample_{args.stamp}.csv")
     if args.check_only:
         map_rows = names.read_map(paths.staging / NAME_MAP_NAME)
         checks = recheck(sample, settings, paths, args.stamp, map_rows)
@@ -401,20 +404,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"checks passed: {int(checks['passed'].sum())} of {len(checks)}")
         return 0 if bool(checks["passed"].all()) else 1
 
-    codes = names.read_zone_codes(find_configs().parent / "inputs" / ZONE_CODES_NAME)
+    codes = names.read_zone_codes(input_path(settings["inputs"]["zone_codes"]))
     listing = get_listing(settings, paths, refresh=False)
     paths.staging_parquet.mkdir(parents=True, exist_ok=True)
     guard = DiskGuard(paths.staging, args.max_staging_gb * BYTES_PER_GB, args.min_free_gb * BYTES_PER_GB)
 
     result, checks, map_rows, referenced = stage(sample, listing, settings, paths, args.stamp, codes, guard, args.workers)
     names.write_map(map_rows, paths.staging / NAME_MAP_NAME)
-    shutil.copyfile(paths.staging / NAME_MAP_NAME, paths.texas / f"name_map_{args.stamp}.csv")
-    write_csv(result, paths.texas / f"staging_{args.stamp}.csv")
-    write_csv(checks, paths.texas / f"checks_{args.stamp}.csv")
+    shutil.copyfile(paths.staging / NAME_MAP_NAME, paths.output / f"name_map_{args.stamp}.csv")
+    write_csv(result, paths.output / f"staging_{args.stamp}.csv")
+    write_csv(checks, paths.output / f"checks_{args.stamp}.csv")
     if args.previous_sample:
         left, shared = dropped_substations(pd.read_csv(args.previous_sample), sample, settings, paths, referenced)
-        write_csv(left, paths.texas / f"left_sample_{args.stamp}.csv")
-        write_csv(shared, paths.texas / f"parquets_shared_with_left_{args.stamp}.csv")
+        write_csv(left, paths.output / f"left_sample_{args.stamp}.csv")
+        write_csv(shared, paths.output / f"parquets_shared_with_left_{args.stamp}.csv")
         print(left.to_string(index=False))
     print(result.to_string(index=False))
     print(checks.to_string(index=False))

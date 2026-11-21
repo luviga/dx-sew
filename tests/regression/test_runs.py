@@ -10,10 +10,13 @@ from dxsew.config import Paths
 from dxsew.runs import cases as runs
 
 SETTINGS = {
-    "release": {"prefix": "REL/2018/State/", "load_data_folder": "load_data", "listing_file": "listing.parquet"},
+    "release": {"prefix": "REL/2018/State/", "load_data_folder": "load_data", "listing_file": "listing.parquet",
+                "description": "REL v0 State"},
     "staging": {"folder": "J3E_STAGED", "parquet_folder": "parquet_data", "opendss_relpath": "base/opendss"},
     "coupling": {"topology_state": "ZZ", "donor_id": "ZZ", "status": "ready"},
-    "runs": {"staging_folder": "RUNS_STAGED", "alone_folder": "ALONE", "parallel": 4},
+    "runs": {"staging_folder": "RUNS_STAGED", "alone_folder": "ALONE", "parallel": 4,
+             "pipeline_override": {"eulp_release": {"residential": "resstock_amy2018_release_2"}}},
+    "output_folder": "out",
 }
 TYPICAL = pd.DataFrame({
     "stratum": ["U|Hot-Humid", "U|Hot-Humid", "R|Hot-Dry"],

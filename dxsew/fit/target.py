@@ -1,11 +1,11 @@
-"""ERCOT hourly fit target: residential and commercial load at the customer meter.
+"""Hourly fit target of a balancing area: residential and commercial load at the customer meter.
 
 The circuit weights of dx-sew are fitted to an observed hourly curve. The
 bottom-up circuits produce residential and commercial load at the customer
 meter, so the observed balancing-area demand is brought to that same quantity:
 industrial and transportation load and transmission and distribution losses are
-taken out. Settings are in configs/fit_target.yaml and URLs in
-configs/sources.yaml.
+taken out. Settings are in the block fit_target of the setup and URLs in
+config/sources.yaml.
 
 Formulas
 --------
@@ -30,7 +30,7 @@ T_t = D_t * (1 - lambda) - X / H
       Target at the customer meter in MW, where H is the number of hours in the
       year (8,760 for 2018).
 
-Run: uv run python -m dxsew.fit_target
+Run: uv run python -m dxsew.fit.target [--setup <id>]
 """
 
 from __future__ import annotations
@@ -44,34 +44,41 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from dxsew import config
+from dxsew.config import find_configs, load_runtime, load_units
 from dxsew.sources import eia861, eia930, eia_state_profile, load_sources
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+HOURS_PER_DAY = load_units()["hours_per_day"]
 
-# United States Central Standard Time is UTC minus 6 hours: 15 U.S.C. 261(a),
-# "the standard time of the sixth zone", https://www.law.cornell.edu/uscode/text/15/261
-CST = timezone(timedelta(hours=-6))
-CENTRAL_PREVAILING = "America/Chicago"
 
-# ASSUMPTION: hours with missing or non-positive ERCO demand are filled by linear
-# interpolation for gaps of up to 3 hours and by the same hour of the previous day
-# for longer gaps.
-MAX_INTERPOLATED_GAP_HOURS = 3
-HOURS_PER_DAY = 24
+def _rule() -> dict:
+    """The block ``fit_target`` of the setup of this process."""
+    return config.setup()["fit_target"]
 
-# ASSUMPTION: the ratio of sum(T_t) to EIA-861 residential plus commercial sales is
-# flagged when it lies outside 0.85 to 1.15. The band only flags the ratio for review;
-# nothing is rescaled.
-CONSISTENCY_BAND = (0.85, 1.15)
+
+def standard_time(rule: dict | None = None) -> timezone:
+    """The standard time of the area, UTC plus ``standard_utc_offset_hours`` (no daylight saving)."""
+    return timezone(timedelta(hours=(rule or _rule())["standard_utc_offset_hours"]))
+
+
+def target_stem(rule: dict) -> str:
+    """Stem of the fit target files: ``<balancing_area>_<year>_fit_target``."""
+    return f"{rule['balancing_area']}_{int(rule['year'])}_fit_target"
+
+
+# The gap rule (max_interpolated_gap_hours) and the consistency band of the
+# checks are keys of the block fit_target, each with its sentence beside it.
 
 
 def hour_index(year: int) -> pd.DataFrame:
     """Hour-ending stamps of calendar year in Central Standard Time.
 
-    Columns utc_hour_ending (UTC) and cst_hour_ending (UTC minus 6 hours).
+    Columns utc_hour_ending (UTC) and cst_hour_ending (the standard time of the
+    setup, UTC minus 6 hours for Central Standard Time).
     """
-    first = pd.Timestamp(year=year, month=1, day=1, hour=1, tz=CST)
-    last = pd.Timestamp(year=year + 1, month=1, day=1, hour=0, tz=CST)
+    zone = standard_time()
+    first = pd.Timestamp(year=year, month=1, day=1, hour=1, tz=zone)
+    last = pd.Timestamp(year=year + 1, month=1, day=1, hour=0, tz=zone)
     cst = pd.date_range(first, last, freq="h")
     return pd.DataFrame({"utc_hour_ending": cst.tz_convert("UTC"), "cst_hour_ending": cst})
 
@@ -103,22 +110,23 @@ def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
     return runs
 
 
-def fill_gaps(demand: pd.Series) -> tuple[pd.Series, pd.Series, list[dict]]:
-    """Apply the gap rule (ASSUMPTION at MAX_INTERPOLATED_GAP_HOURS).
+def fill_gaps(demand: pd.Series, max_gap: int | None = None) -> tuple[pd.Series, pd.Series, list[dict]]:
+    """Apply the gap rule (the setup's ``fit_target.max_interpolated_gap_hours`` and its sentence).
 
-    A run of missing or non-positive hours of length up to
-    MAX_INTERPOLATED_GAP_HOURS, with a valid hour on each side, is filled by
+    A run of missing or non-positive hours of length up to ``max_gap`` (default:
+    the setup's value), with a valid hour on each side, is filled by
     linear interpolation between those two hours. Any other run is filled hour by
     hour, in time order, with the value of the same hour of the previous day
     (HOURS_PER_DAY positions earlier), which may itself be a filled value.
     Returns the filled series, a boolean mask of filled hours and the list of runs.
     """
+    max_gap = _rule()["max_interpolated_gap_hours"] if max_gap is None else max_gap
     v = demand.to_numpy(dtype=float).copy()
     bad = ~(v > 0)
     gaps = []
     for start, end in _runs(bad):
         n = end - start + 1
-        if n <= MAX_INTERPOLATED_GAP_HOURS and start > 0 and end < len(v) - 1:
+        if n <= max_gap and start > 0 and end < len(v) - 1:
             a, b = v[start - 1], v[end + 1]
             for k in range(n):
                 v[start + k] = a + (b - a) * (k + 1) / (n + 1)
@@ -167,8 +175,8 @@ def describe(series: pd.Series, cst: pd.Series) -> dict:
 
 
 def local_time_check(table: pd.DataFrame) -> dict:
-    """Compare EIA's local-time column with UTC converted to Central prevailing time."""
-    expected = table["utc_hour_ending"].dt.tz_convert(CENTRAL_PREVAILING).dt.tz_localize(None)
+    """Compare EIA's local-time column with UTC converted to the area's prevailing time."""
+    expected = table["utc_hour_ending"].dt.tz_convert(_rule()["prevailing_time_zone"]).dt.tz_localize(None)
     offset = (table["utc_hour_ending"].dt.tz_localize(None) - table["local_hour_ending"])
     return {
         "rows": int(len(table)),
@@ -187,7 +195,11 @@ def _load_yaml(path: Path) -> dict:
 def run(local_config: Path, log=print) -> dict:
     """Build the fit target and write it under <data_root>/derived. Returns the summary."""
     local = _load_yaml(local_config)
-    settings = _load_yaml(REPO_ROOT / "config" / "fit_target.yaml")
+    setup = config.setup()
+    settings = setup["fit_target"]
+    texts_key = load_runtime()["names"]["texts_key"]
+    published_key = f"{setup['label']}_published"
+    band = tuple(settings["consistency_band"])
     sources = load_sources()
     data_root = Path(local["data_root"])
     eia_dir, out_dir = data_root / "eia", data_root / "derived"
@@ -226,7 +238,7 @@ def run(local_config: Path, log=print) -> dict:
     d_stats, t_stats = describe(demand, cst), describe(tgt, cst)
     ratio = t_stats["energy_mwh"] / kept_mwh
     negative = int((tgt < 0).sum())
-    pub = settings["ercot_published"]
+    pub = settings["published"]
     pub_peak_utc = pd.Timestamp(pub["peak_local_hour_ending"]).tz_convert("UTC")
     ercot_cmp = {
         "source": pub["source"],
@@ -240,7 +252,7 @@ def run(local_config: Path, log=print) -> dict:
         "energy_difference_mwh": d_stats["energy_mwh"] - pub["annual_energy_mwh"],
     }
     fmt = {"removed_mw": removed_mw, "loss_share": lam, "year": year, "balancing_area": ba, "hours": hours}
-    assumptions = {k: v.format(**fmt) for k, v in settings["assumptions"].items()}
+    assumptions = {k: v.format(**fmt) for k, v in settings[texts_key].items()}
 
     summary = {
         "balancing_area": ba,
@@ -277,15 +289,15 @@ def run(local_config: Path, log=print) -> dict:
             "demand": d_stats,
             "target": t_stats,
             "consistency_ratio": ratio,
-            "consistency_band": list(CONSISTENCY_BAND),
-            "consistency_within_band": CONSISTENCY_BAND[0] <= ratio <= CONSISTENCY_BAND[1],
+            "consistency_band": list(band),
+            "consistency_within_band": band[0] <= ratio <= band[1],
             "target_negative_hours": negative,
-            "ercot_published": ercot_cmp,
+            published_key: ercot_cmp,
         },
-        "assumptions": assumptions,
+        texts_key: assumptions,
     }
 
-    _print_checks(summary, by_class, log)
+    _print_checks(summary, by_class, log, published_key, setup["area"])
     if negative:
         raise ValueError(f"target is negative in {negative} hours; nothing written")
 
@@ -301,16 +313,16 @@ def run(local_config: Path, log=print) -> dict:
             "target_mw": tgt.to_numpy(),
         }
     )
-    stem = f"{ba}_{year}_fit_target"
+    stem = target_stem(settings)
     frame.to_parquet(out_dir / f"{stem}.parquet", index=False)
     frame.to_csv(out_dir / f"{stem}.csv", index=False)
     with open(out_dir / f"{stem}_summary.json", "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+        json.dump(summary, f, indent=load_runtime()["json_indent"])
     log(f"wrote {out_dir / (stem + '.parquet')}, .csv and _summary.json")
     return summary
 
 
-def _print_checks(s: dict, by_class: pd.DataFrame, log) -> None:
+def _print_checks(s: dict, by_class: pd.DataFrame, log, published_key: str, area: str) -> None:
     c = s["checks"]
     log("1. annual energy, peak and minimum")
     for name in ("demand", "target"):
@@ -329,9 +341,9 @@ def _print_checks(s: dict, by_class: pd.DataFrame, log) -> None:
         log(f"   {k}: {row['mwh']:,.0f} | {row['mwh_with_delivery']:,.0f}")
     log(f"4. consistency sum(T)/(R+C) = {c['consistency_ratio']:.4f} (within band: {c['consistency_within_band']})")
     log(f"5. minimum target {c['target']['min_mw']:,.1f} MW; negative hours {c['target_negative_hours']}")
-    e = c["ercot_published"]
+    e = c[published_key]
     log(
-        f"6. ERCOT published peak {e['published_peak_mw']:,} MW, D_t peak differs by {e['peak_difference_mw']:,.1f} MW; "
+        f"6. {area} published peak {e['published_peak_mw']:,} MW, D_t peak differs by {e['peak_difference_mw']:,.1f} MW; "
         f"published energy {e['published_annual_energy_mwh']:,} MWh, D_t differs by {e['energy_difference_mwh']:,.0f} MWh"
     )
     log(f"   demand column: {i['eia930_demand']['demand_column']['column']}; filled hours: {s['filled_hours']['count']}")
@@ -339,8 +351,10 @@ def _print_checks(s: dict, by_class: pd.DataFrame, log) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build the hourly fit target.")
-    parser.add_argument("--config", default=str(REPO_ROOT / "config" / "local.yaml"))
+    parser.add_argument("--config", default=str(find_configs() / "local.yaml"))
+    config.add_setup_argument(parser)
     args = parser.parse_args(argv)
+    config.use_setup(args.setup)
     run(Path(args.config))
 
 

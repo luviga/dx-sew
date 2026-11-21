@@ -10,7 +10,7 @@ from dxsew.runs import settings as coupling_settings
 from dxsew.runs import stage
 
 SETTINGS = {
-    "release": {"prefix": "REL/2018/State/", "load_data_folder": "load_data"},
+    "release": {"prefix": "REL/2018/State/", "load_data_folder": "load_data", "description": "REL v0 State"},
     "staging": {"folder": "STAGED", "parquet_folder": "parquet_data", "opendss_relpath": "base/opendss"},
     "coupling": {"topology_state": "ZZ", "donor_id": "ZZ", "status": "ready"},
 }
@@ -22,7 +22,7 @@ UNIT = {
     "feeders": 3,
     "loads": 120,
 }
-# Keys of an entry of configs/topology_registry.yaml of DeltaE/dss-eulp-coupling,
+# Keys of an entry of config/topology_registry.yaml of DeltaE/dss-eulp-coupling,
 # with parquet_relpath, which run_case.py reads when present.
 COUPLING_KEYS = {
     "topology_state",

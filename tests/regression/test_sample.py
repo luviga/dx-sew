@@ -14,8 +14,11 @@ SETTINGS = {
         "not_substations": ["subtransmission"],
         "load_data_folder": "load_data",
         "listing_file": "listing.parquet",
+        "substation_file_parts": 2,
+        "feeder_file_parts": 3,
     },
     "staging": {"folder": "STAGED", "parquet_folder": "parquet_data", "opendss_relpath": "base/opendss"},
+    "output_folder": "out",
 }
 
 

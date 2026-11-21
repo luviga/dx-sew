@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dxsew.config import load_setup
 from dxsew.fit import weights as fit
 
 
@@ -263,7 +264,7 @@ def test_sector_factors_and_product():
     assert f["m"] == pytest.approx(10 / 8)
     assert f["c"] == pytest.approx(12 / 10)
     assert f["e"] * f["m"] * f["c"] == pytest.approx(f["M"], rel=1e-12)
-    assert f["product_gap"] <= fit.PRODUCT_TOLERANCE
+    assert f["product_gap"] <= load_setup()["fit"]["product_tolerance"]
 
 
 def test_report_only_fits_known_answers():

@@ -21,10 +21,13 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 
+from dxsew.config import load_runtime
+
 PAGE_SIZE = "1000"  # the largest page ListObjectsV2 returns
-TIMEOUT_S = 120.0
-RETRIES = 6
-CHUNK_BYTES = 1024 * 1024
+RUNTIME = load_runtime()["oedi"]
+TIMEOUT_S = RUNTIME["timeout_s"]
+RETRIES = RUNTIME["retries"]
+CHUNK_BYTES = RUNTIME["chunk_bytes"]
 
 
 def _tag(element: ET.Element) -> str:
@@ -51,7 +54,7 @@ def get_with_retries(
         except requests.RequestException as error:
             last_error = error
             if attempt < RETRIES:
-                time.sleep(min(2**attempt, 30))
+                time.sleep(min(RUNTIME["backoff_base"] ** attempt, RUNTIME["backoff_max_s"]))
     raise RuntimeError(f"Request failed after {RETRIES + 1} attempts: {url}: {last_error}")
 
 
@@ -94,7 +97,7 @@ def list_prefix(bucket_url: str, prefix: str, progress: Callable[[int], None] | 
         for key, size in iter_objects(session, bucket_url, prefix):
             keys.append(key)
             sizes.append(size)
-            if progress and len(keys) % 50000 == 0:
+            if progress and len(keys) % RUNTIME["progress_listed"] == 0:
                 progress(len(keys))
     return pd.DataFrame({"key": keys, "size": pd.array(sizes, dtype="int64")})
 
@@ -168,7 +171,7 @@ def fetch_many(
             result["downloaded"] += 1
             result["bytes_downloaded"] += size
             done = result["downloaded"]
-        if done % 2000 == 0:
+        if done % RUNTIME["progress_downloaded"] == 0:
             print(f"  {label}: {done} files downloaded", file=sys.stderr, flush=True)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

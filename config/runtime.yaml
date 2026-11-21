@@ -1,0 +1,63 @@
+# Engineering settings of the code: they change how a run goes, never what
+# it computes. Each has one line on what it does. These hold for every setup.
+
+# Downloads of single source files (dxsew.sources.download).
+download:
+  tries: 3                # attempts before a download fails
+  head_timeout_s: 60      # seconds to wait for the size answer (HEAD)
+  head_pause_step_s: 2    # pause after a failed HEAD, times the attempt number
+  get_timeout_s: 300      # seconds to wait for the file answer (GET)
+  get_pause_step_s: 5     # pause after a failed GET, times the attempt number
+  chunk_bytes: 1048576    # bytes written per chunk of a download
+
+# Listing and downloads of the OEDI data lake (dxsew.sources.oedi).
+oedi:
+  timeout_s: 120.0        # seconds to wait for one answer
+  retries: 6              # retries after the first attempt
+  backoff_base: 2         # the pause before retry n is backoff_base ** n seconds
+  backoff_max_s: 30       # longest pause between attempts
+  chunk_bytes: 1048576    # bytes written per chunk of a download
+  progress_listed: 50000  # listing progress is reported every this many objects
+  progress_downloaded: 2000  # download progress is reported every this many files
+
+# Bytes read per block when a file's SHA-256 is computed.
+hash_block_bytes: 1048576
+
+# Default worker counts of the command lines (each one can be given on the
+# command line); Machine 3 is shared, so readers and builders stay at 8.
+workers:
+  sample_threads: 32      # dxsew.frame.sample --workers, download threads
+  features_threads: 16    # dxsew.frame.features --workers, download threads
+  features_processes: 8   # dxsew.frame.features --processes, reader processes
+  trust_processes: 8      # dxsew.frame.trust --processes, reader processes
+  curves_processes: 8     # dxsew.curves.year --workers, default and largest
+  stage_threads: 16       # dxsew.runs.stage --workers, download threads
+  cases_threads: 16       # dxsew.runs.cases --workers, default and largest
+
+# Tasks sent to a reader process at a time.
+chunksize:
+  frame: 16               # substations per task of the frame reader
+  trust: 16               # substations per task of the zone counts
+  features: 32            # feeders per task of the feature reader
+
+# Floor of a denominator in relative differences, so a zero kW never divides.
+relative_floor: 1.0e-12
+# Slack on a degree distance when the nearest polygon is chosen (ba_map.nearest).
+nearest_slack_degrees: 1.0e-9
+
+# Printing and files.
+print_width: 220          # console width of the tables dxsew.frame.groups prints
+print_rows: 20            # rows of the long tables printed to the console
+detail_items: 20          # failures or names joined into one cell of a check or result table
+pin_status_lines: 10      # changed paths shown when the coupling clone is not clean
+print_paths: 3            # case files printed after the run settings
+json_indent: 2            # indent of the JSON files written
+yaml_width: 1000          # line width of the YAML files written, so no line wraps
+
+# Names that hold the word the scan test bans in code (config/scan.yaml).
+names:
+  # A setup key <key><note_suffix> holds the ASSUMPTION sentence of <key>.
+  note_suffix: "_assumption"
+  # Key of the ASSUMPTION texts in a setup block and in the summary files the
+  # run writes (the filled texts).
+  texts_key: "assumptions"

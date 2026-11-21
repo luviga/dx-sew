@@ -1,6 +1,6 @@
 """County, RTO membership and climate zone of a substation.
 
-Sources (the URLs are settings in ``configs/texas_sample.yaml``):
+Sources (the URLs are settings of the setup, block ``geography``):
 
 - County boundaries: U.S. Census Bureau, TIGER/Line 2018 counties,
   https://www2.census.gov/geo/tiger/TIGER2018/COUNTY/tl_2018_us_county.zip
@@ -27,9 +27,11 @@ from shapely import STRtree
 from shapely.geometry import Point, shape
 from shapely.geometry.base import BaseGeometry
 
-# The EIA-861 readers and the veto (decisions K57 and K58) live in dxsew.veto,
-# the procedure for any balancing area; they are imported here so every
-# existing caller of dxsew.texas.geo works as before.
+from dxsew.config import load_units
+
+# The EIA-861 readers and the veto (decisions K57 and K58) live in
+# dxsew.frame.veto, the procedure for any balancing area; they are imported
+# here so every existing caller of dxsew.frame.geo works as before.
 from dxsew.frame.veto import (  # noqa: F401
     IGNORED_MARK_ONLY,
     MISSING_ROW,
@@ -73,13 +75,8 @@ def read_counties(zip_path: Path, state_fips: str) -> list[County]:
 
 def bounds_of(counties: list[County]) -> tuple[float, float, float, float]:
     """``(west, south, east, north)`` of the counties, in degrees."""
-    boxes = [county.polygon.bounds for county in counties]
-    return (
-        min(box[0] for box in boxes),
-        min(box[1] for box in boxes),
-        max(box[2] for box in boxes),
-        max(box[3] for box in boxes),
-    )
+    wests, souths, easts, norths = zip(*(county.polygon.bounds for county in counties))
+    return (min(wests), min(souths), max(easts), max(norths))
 
 
 def coordinates_inside(xs, ys, box: tuple[float, float, float, float]) -> bool:
@@ -94,13 +91,8 @@ def coordinates_inside(xs, ys, box: tuple[float, float, float, float]) -> bool:
 def assign_counties(xs, ys, counties: list[County]) -> list[County | None]:
     """County whose polygon holds each point; ``None`` when no county does.
 
-    ASSUMPTION: the bus coordinates of the release are longitude and latitude
-    in WGS84 degrees and are set against the NAD83 county boundaries with no
-    datum shift. The release states no coordinate system. Positions in the
-    two datums differ by up to about two metres in the United States (NOAA
-    National Geodetic Survey, "Improving the National Spatial Reference
-    System", https://www.ngs.noaa.gov/2010Summit/Improving_the_NSRS.pdf),
-    far below the size of a county.
+    The coordinates are read as in the setup's sentence
+    ``geography.counties.coordinates``.
     """
     tree = STRtree([county.polygon for county in counties])
     found: list[County | None] = []
@@ -119,8 +111,10 @@ def gisjoin(geoid: str) -> str:
 
     ``48303`` gives ``G4803030``: the letter G, the state code and a zero,
     the county code and a zero (IPUMS NHGIS, https://www.nhgis.org/geographic-crosswalks).
+    The state code has ``fips_state_digits`` digits (config/units.yaml).
     """
-    return f"G{geoid[:2]}0{geoid[2:]}0"
+    digits = load_units()["fips_state_digits"]
+    return f"G{geoid[:digits]}0{geoid[digits:]}0"
 
 
 def membership(zip_path: Path, source: dict) -> tuple[pd.DataFrame, dict]:
@@ -196,11 +190,12 @@ def climate_zones(metadata_csv: Path, source: dict) -> tuple[dict[str, str], int
 
 def central_angle(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     """Great-circle angle between two points, in radians (haversine formula)."""
+    # math.ldexp(x, -1) is x / 2 and math.ldexp(x, 1) is 2 x, both exact.
     p1, p2 = math.radians(lat1), math.radians(lat2)
-    half_lat = (p2 - p1) / 2
-    half_lon = math.radians(lon2 - lon1) / 2
+    half_lat = math.ldexp(p2 - p1, -1)
+    half_lon = math.ldexp(math.radians(lon2 - lon1), -1)
     a = math.sin(half_lat) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(half_lon) ** 2
-    return 2 * math.asin(min(1.0, math.sqrt(a)))
+    return math.ldexp(math.asin(min(1.0, math.sqrt(a))), 1)
 
 
 def county_zones(counties: list[County], zones: dict[str, str]) -> tuple[dict[str, str], list[str]]:

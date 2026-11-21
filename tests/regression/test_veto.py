@@ -9,7 +9,8 @@ import shapefile
 import yaml
 from shapely.geometry import box
 
-from dxsew.config import find_configs, load_sample_settings
+from dxsew import config
+from dxsew.config import find_configs, load_sample_settings, load_setup
 from dxsew.frame import ba_map as ba
 from dxsew.frame import geo, veto
 from dxsew.frame.sample import geography_columns, veto_for, veto_lookups_for
@@ -284,7 +285,7 @@ def test_settings_files_hold_the_three_names():
     balancing = load_sample_settings()["geography"]["balancing_area"]
     assert balancing["veto_lookups"] is True
     assert balancing["ba_code"] == "ERCO"
-    with (find_configs() / "veto_areas.yaml").open(encoding="utf-8") as handle:
+    with (find_configs() / "areas.yaml").open(encoding="utf-8") as handle:
         areas = {a["name"]: a for a in yaml.safe_load(handle)["areas"]}
     assert {n: (a["states"], a["rto"], a["ba_code"], a["ba_prefix"], a["veto_ignore_marks"]) for n, a in areas.items()} == {
         "ERCOT": (["TX"], "ERCOT", "ERCO", "ERCO", ["Other"]),
@@ -318,7 +319,7 @@ def write_shapes(path, field, shapes, extra=None):
 
 
 @pytest.fixture
-def report_files(tmp_path):
+def report_files(tmp_path, monkeypatch):
     data, configs = tmp_path / "data", tmp_path / "configs"
     for folder in (data / "eia", data / "census", data / "geo" / "m", configs, tmp_path / "work"):
         folder.mkdir(parents=True)
@@ -331,24 +332,22 @@ def report_files(tmp_path):
         for ending in (".shp", ".shx", ".dbf"):
             archive.write(tmp_path / "work" / f"counties{ending}", f"counties{ending}")
     write_shapes(data / "geo" / "m" / "map", "BA", REPORT_POLYGONS)
-    shared = {
-        "geography": {
-            "balancing_area": {**{k: v for k, v in BASE.items() if k not in ("state", "veto")},
-                               "url": "https://example.org/eia.zip"},
-            "counties": {"url": "https://example.org/counties.zip"},
-            "balancing_area_map": {"ba_shapes": "https://example.org/map.shp", "folder": "m"},
-        }
+    # The setup of the report: the real one, with the hand-made source files and
+    # the output folder "out" (the report reads them through config.setup()).
+    shared = load_setup()
+    shared["geography"] = {
+        "balancing_area": {**{k: v for k, v in BASE.items() if k not in ("state", "veto")},
+                           "url": "https://example.org/eia.zip"},
+        "counties": {"url": "https://example.org/counties.zip"},
+        "balancing_area_map": {"ba_shapes": "https://example.org/map.shp", "folder": "m"},
     }
-    (configs / "shared.yaml").write_text(yaml.safe_dump(shared), encoding="utf-8")
-    areas = {
-        "sources": {"settings_file": "shared.yaml", "eia861": "geography.balancing_area",
-                    "counties": "geography.counties", "map": "geography.balancing_area_map", "eia861_year": 2018},
-        "output_folder": "out",
-        "areas": [CAISO_AREA],
-    }
-    (configs / "veto_areas.yaml").write_text(yaml.safe_dump(areas), encoding="utf-8")
+    shared["eia861"]["year"] = 2018
+    shared["veto_report"]["output_folder"] = "out"
+    monkeypatch.setattr(config, "setup", lambda: shared)
+    areas = {"areas": [CAISO_AREA]}
+    (configs / "areas.yaml").write_text(yaml.safe_dump(areas), encoding="utf-8")
     (configs / "local.yaml").write_text(yaml.safe_dump({"data_root": str(data)}), encoding="utf-8")
-    return configs / "veto_areas.yaml", data / "out"
+    return configs / "areas.yaml", data / "out"
 
 
 def test_report_class_and_shares():
