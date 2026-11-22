@@ -1,6 +1,6 @@
 # Fit of the group weights to ERCOT's 2018 hourly load
 
-`dxsew.fit.weights` fits one weight per fit column so that the weighted sum of the groups' hourly curves matches ERCOT's 2018 hourly fit target (decision K43): building profiles summed hour by hour, no power flow, weights fitted on three weeks of every month and energy, peak and daily range errors reported on the rest. Decision K71 (21 November 2026) replaced the fitted weights: the frame's load is corrected by two sector factors computed from EIA-861, nothing is fitted to the hourly curve, and the hourly curve becomes the test (section 7). The code is in `dxsew/fit/weights.py` and its tests are in `tests/regression/test_fit.py`.
+`dxsew.fit.weights` fits one weight per fit column so that the weighted sum of the groups' hourly curves matches ERCOT's 2018 hourly fit target (decision K43): building profiles summed hour by hour, no power flow, weights fitted on three weeks of every month and energy, peak and daily range errors reported on the rest. Decision K71 (21 November 2026) replaced the fitted weights: two sector factors are computed from EIA-861, nothing is fitted to the hourly curve, and the hourly curve becomes the test (section 7). Under decision K74 (21 November 2026) the sector factors are report-only diagnostics: no factor reaches any feeder, substation or curve. The code is in `dxsew/fit/weights.py` and its tests are in `tests/regression/test_fit.py`.
 
 ```
 uv run python -m dxsew.fit.weights --stamp <stamp> --curves <feeder_curves.parquet> --typical <typical_feeders csv> \
@@ -75,7 +75,7 @@ For each sector `k` (homes `res`, businesses `com`):
 ### Factors
 
 - `M_k = S_k / E_k`, the multiplier on the frame's sector-k curve for the ERCOT total.
-- `e_k = (S_k / N_eia_k) / (E_k / N_model_k)`, the energy factor: EIA-861 sales per customer over the model's energy per customer. This is the factor that reaches each feeder's sector-k load in assembly.
+- `e_k = (S_k / N_eia_k) / (E_k / N_model_k)`, the energy factor: EIA-861 sales per customer over the model's energy per customer. Under decision K74 (21 November 2026) it is a report-only diagnostic and reaches no feeder, substation or curve.
 - `m_k = N_frame_k / N_model_k`, the mix factor: the frame's own sector mix over the run feeders' mix. It is carried by the frame's own customer counts when feeders are assembled and is not applied to any feeder.
 - `c_k = N_eia_k / N_frame_k`, the count factor: ERCOT customers over frame customers. It measures how much of ERCOT the frame covers and is not applied to any feeder.
 

@@ -122,7 +122,8 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 |---|---|
 | `staging_folder` | Folder under `smart_ds_base` for the staged substations of the run feeders |
 | `alone_folder` | Folder under `smart_ds_base` with one tree per run feeder |
-| `parallel` | Coupling processes at once for phase 5b |
+| `parallel` | Coupling processes at once for phase 5b, and for the phases after `serial_through_phase` in a batch ([trial.md](trial.md)) |
+| `serial_through_phase` | Last phase of the serial part of a batch: up to it every case runs one call at a time, case by case, because phase 5a is the only phase that downloads building files and writes each under its final name (problem log P7) |
 | `pipeline_override` | `pipeline_config.yaml` of the runs (the ResStock release of the weather year) |
 
 ### `curves`
@@ -135,6 +136,10 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 | `check_rel_tolerance` | Tolerance of the check of the rebuilt peaks (K66) |
 | `top_end_uses` | End uses listed at each common day's peak |
 | `timestamp_source`, `timestamp_convention` | Source and ASSUMPTION text written to `timestamps.csv` |
+| `mix_days_folder`, `circuit_days_file`, `circuit_weights_file` | Workspace folder and files of the coupling's phase `mix_days`: each mix's day and building-curve peak per feeder and season, and each building's weight per heating group ([trial.md](trial.md)) |
+| `mix_group_lists` | Per heating group (`baseline`, `dm`, `un`), the workspace folder and file of its required-parquet list, in the order the mix curve sums them |
+| `results_folder`, `aggregate_file`, `circuit_summary_file`, `voltage_summary_file` | Workspace folder and files of the coupling's phase 8: monitor m2 totals per step, the circuit summary and the load voltages |
+| `feeder_registry_file` | The workspace's map of circuit ids to feeder folders, written by the coupling's phase 2 |
 
 `end_uses_assumption` gives the rule for the end-use columns.
 
@@ -177,6 +182,24 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 | `output_folder` | Folder under `data_root` that receives the report |
 | `share_threshold` | Share of a county's area in the map that counts as in |
 | `share_decimals` | Decimals of `share_in_area` |
+
+### `trial`
+
+| Key | Meaning |
+|---|---|
+| `check_set` | Substations (`<subregion>/<substation>`) run in full beside the run feeders (decision K73) |
+| `passes` | One entry per pass: its `peak_day_rule`, and for a pass that runs every mix on a common day, `given_day` (the option of `common_days.csv`, B, whose given days file is passed on the command line) |
+| `timing_cases` | Run-feeder cases nearest the median loads that run their later phases alone in the first pass |
+
+### `assembly`
+
+| Key | Meaning |
+|---|---|
+| `sum_rel_tolerance` | Tolerance of the gate that the substation curves add to the stratum curves, with its ASSUMPTION sentence |
+| `share_bands` | Band edges of the share of housing units in buildings of 5 or more units, with its ASSUMPTION sentence; they group the report only |
+| `units_5plus_columns`, `units_total_column` | Columns of ACS table B25024 in the coverage files: units in buildings of 5 or more units, and all units |
+| `homes_column`, `occupied_column` | Columns of the coverage files with the frame's homes and the ACS occupied units, for the ratio of each band |
+| `tracts_url` | The 2018 cartographic boundary file of the state's census tracts (also in `config/sources.yaml`) |
 
 ## `config/areas.yaml`
 

@@ -304,6 +304,16 @@ runs:
   # Coupling processes at once for phase 5b (schedule C of decision K69); the
   # phases that download (pre to 5a) run one feeder at a time.
   parallel: 4
+  # Last phase of the serial part of a batch (dxsew.runs.batch, schedule C):
+  # every case runs the phases up to and including this one one call at a
+  # time, case by case; the later phases run runs.parallel cases at once.
+  # Phase 5a is the only phase that downloads building files, and it writes
+  # each file under its final name and skips a name that exists, so two
+  # downloads at once can leave a partial file that later runs skip (problem
+  # log P7):
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5a_eulp_downloads/download_parquets_residential_impl.py
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5a_eulp_downloads/download_parquets_commercial_impl.py
+  serial_through_phase: "5a"
   # pipeline_config.yaml of the runs: AMY2018 weather for homes (decision
   # K22), the ResStock 2024 release 2 run on actual meteorological year 2018
   # weather, on OEDI under
@@ -320,6 +330,39 @@ curves:
   # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5b_profile_generation/find_max_day_curve_impl.py
   recipe_file: "TX_required_parquets_per_feeder.csv"
   peak_days_file: "TX_peak_days.csv"
+  # Files of phase mix_days (dxsew.curves.mix, dxsew.runs.results), in the
+  # workspace folder mix_days_folder, written by run_mix of
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5b_profile_generation/find_max_day_curve_impl.py#L444-L453
+  mix_days_folder: "mix_days"
+  circuit_days_file: "TX_circuit_days.csv"
+  circuit_weights_file: "TX_circuit_weights.csv"
+  # Required-parquet list of each heating group of a mix (the Group column of
+  # circuit_weights_file) and the workspace folder that holds it: baseline from
+  # phase 5b, dm and un from phase 5d (SCENARIO_INPUTS and MIX_GROUPS of
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/5b_profile_generation/find_max_day_curve_impl.py#L110-L114
+  # and line 208).
+  mix_group_lists:
+    baseline:
+      folder: "5b_profile_generation"
+      file: "TX_required_parquets_per_feeder.csv"
+    dm:
+      folder: "5d_scenario_controls/get_scenario_csv_controls"
+      file: "TX_required_parquets_per_feeder_dm.csv"
+    un:
+      folder: "5d_scenario_controls/get_scenario_csv_controls"
+      file: "TX_required_parquets_per_feeder_uncontrolled.csv"
+  # Files of phase 8 in the workspace folder results_folder: the per-step
+  # monitor m2 totals and the circuit summary, written by
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/8_results_analysis/append_experiment_results.py#L46-L47
+  # and the load voltages by the same file, line 111.
+  results_folder: "8_results_analysis"
+  aggregate_file: "aggregate_m2_combined.csv"
+  circuit_summary_file: "circuit_summary_combined.csv"
+  voltage_summary_file: "load_voltage_summary.csv"
+  # Circuit ids and feeder folders of a workspace, written by phase 2 and read by
+  # load_feeder_registry of
+  # https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/pipeline_utils.py#L417-L427
+  feeder_registry_file: "feeder_registry.json"
   # Months of each season, in the order the outputs list the seasons; the
   # coupling's seasons at its pin (find_max_day_curve_impl.py).
   seasons:
@@ -442,3 +485,51 @@ veto_report:
   area_shares_assumption: "ASSUMPTION: shares are computed on longitude and latitude degrees, not on an equal-area projection. Within one county the two differ by a negligible amount, since the scale of a degree of longitude changes little across a county."
   # Decimals of the column share_in_area.
   share_decimals: 6
+
+trial:
+  # The power-flow trial (decision K73). Method note: docs/trial.md.
+  # Whole substations run in full beside the run feeders, as the check set of
+  # decision K73: the group curve scaled by customers is set against the
+  # substation's own run (<subregion>/<substation>).
+  check_set: ["P159U/p159uhs6_1247"]
+  # The two passes. Each pass's pipeline_config.yaml is runs.pipeline_override
+  # with the pass's peak_day_rule (coupling README, "Peak-day rules"):
+  # per_circuit runs each mix on the feeder's own worst day of that mix, given
+  # runs every mix on the day of given_day, the common day of dxsew.curves.year
+  # whose given_days_<given_day>_<stamp>.csv is passed on the command line.
+  passes:
+    pass_1:
+      peak_day_rule: "per_circuit"
+    pass_2:
+      peak_day_rule: "given"
+      given_day: "B"
+  # Run-feeder cases of the timing set: the cases whose loads are nearest the
+  # median of the trial's run-feeder cases (ties go to name order). In the
+  # first pass they run their phases after the serial part one case at a
+  # time, with no other coupling call of the batch running.
+  timing_cases: 2
+
+assembly:
+  # Substation curves at baseline from the group curves, ratings, loading and
+  # the check set (decisions K60, K73, K74). Method note: docs/assembly.md.
+  sum_rel_tolerance: 1.0e-6
+  sum_rel_tolerance_assumption: "ASSUMPTION: the sum of all substation curves and the sum of the stratum curves of the year curves agree within a relative 1e-6 at every point; the two sums differ only by float32 rounding of the stored curves."
+  # Bands of the share of housing units in buildings of 5 or more units (ACS
+  # table B25024), for the loading table only.
+  share_bands: [0.03, 0.06, 0.10, 0.15, 0.25, 0.50]
+  share_bands_assumption: "ASSUMPTION: the band edges 0.03, 0.06, 0.10, 0.15, 0.25 and 0.50 of the share of housing units in buildings of 5 or more units group the report only and change no value."
+  # Columns of ACS 2018 5-year table B25024 (units in structure) in the county
+  # and tract coverage files: units in buildings of 5 or more units, and all
+  # units. U.S. Census Bureau, https://api.census.gov/data/2018/acs/acs5/groups/B25024.html
+  units_5plus_columns: ["b25024_5_9", "b25024_10_19", "b25024_20_49", "b25024_50_plus"]
+  units_total_column: "b25024_total"
+  # Homes and ACS occupied units of the coverage files, for the ratio of each
+  # band.
+  homes_column: "frame_homes"
+  occupied_column: "acs_occupied_units"
+  # U.S. Census Bureau, 2018 cartographic boundary file of census tracts,
+  # Texas, 1:500,000, found on
+  # https://www.census.gov/geographies/mapping-files/time-series/geo/carto-boundary-file.2018.html
+  # (config/sources.yaml, cb_2018_48_tract_500k). Read with the state code of
+  # geography.counties.
+  tracts_url: "https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_48_tract_500k.zip"

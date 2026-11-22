@@ -44,6 +44,7 @@ uv run python -m dxsew.runs.coupling --case <case.yaml> --settings <folder> [--s
 Two keyword arguments change this, both off by default:
 
 - `phase="<id>"` (`--phase <id>`) runs one phase of the coupling's phase order (`pre`, `1`, `2`, ..., `5b`, ...) with `run_case.py --phase <id>` in place of `--all`. `run_case.py` creates the case's workspace when it does not exist and runs the phase into it (`prepare_work_root` in https://github.com/DeltaE/dss-eulp-coupling/blob/154fa8d378b3e96a9799a01f3b719abf4235ad83/run_case.py#L323-L338), so the phases of one case can be run one call at a time, in the coupling's order.
+- `quiet=True` writes the output lines to the log file only, not to the console, so cases run at once do not mix their output (used by `dxsew.runs.batch`, [trial.md](trial.md)).
 - `check=False` (`--no-check`) runs neither pin check. `git status` takes the clone's index lock for a moment, so two pin checks at the same time can collide when several cases run at once. A caller that runs a batch in parallel checks the pin once before the batch and once after it instead.
 
 ## The settings folder

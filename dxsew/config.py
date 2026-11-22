@@ -55,15 +55,20 @@ SETUP_KEYS = {
                "substation_check_rel_tolerance", "scaling", "cap", "small_share_report", "dial_targets",
                "max_frame_customer_share", "dial_choice", "starting_weight", "gate_zero_tolerance",
                "gate_weight_sum_tolerance", "download_max_gb", "download_min_free_gb"},
-    "runs": {"staging_folder", "alone_folder", "parallel", "pipeline_override"},
+    "runs": {"staging_folder", "alone_folder", "parallel", "serial_through_phase", "pipeline_override"},
     "curves": {"recipe_file", "peak_days_file", "seasons", "coupling_start", "check_rel_tolerance", "top_end_uses",
-               "timestamp_source", "timestamp_convention"},
+               "timestamp_source", "timestamp_convention", "mix_days_folder", "circuit_days_file",
+               "circuit_weights_file", "mix_group_lists", "results_folder", "aggregate_file", "circuit_summary_file",
+               "voltage_summary_file", "feeder_registry_file"},
     "fit_target": {"balancing_area", "year", "state", "classes_kept", "classes_removed", "standard_utc_offset_hours",
                    "prevailing_time_zone", "max_interpolated_gap_hours", "consistency_band", "published"},
     "fit": {"last_fit_day", "end_use_tolerance", "starting_tolerance", "product_tolerance", "excluded_end_uses",
             "sources"},
     "trust": {"edge_km", "puct_served_share"},
     "veto_report": {"eia861", "counties", "map", "output_folder", "share_threshold", "share_decimals"},
+    "trial": {"check_set", "passes", "timing_cases"},
+    "assembly": {"sum_rel_tolerance", "share_bands", "units_5plus_columns", "units_total_column", "homes_column",
+                 "occupied_column", "tracts_url"},
 }
 # Blocks that also hold the texts a run fills (runtime.yaml names.texts_key).
 BLOCKS_WITH_TEXTS = ("fit_target", "fit")
