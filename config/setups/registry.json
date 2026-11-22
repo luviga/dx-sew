@@ -1,0 +1,7 @@
+{
+  "schema": "dxsew-setup-registry-v1",
+  "default": "ercot_2018",
+  "setups": {
+    "ercot_2018": "project:config/setups/ercot_2018.yaml"
+  }
+}

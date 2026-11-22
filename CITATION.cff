@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "dx-sew"
+type: software
+authors:
+  - given-names: "Luis"
+    family-names: "Victor"
+    email: "luis.fdo.victor.g@gmail.com"
+repository-code: "https://github.com/luviga/dx-sew"
+license: Apache-2.0
+version: "0.1.0"

@@ -1,9 +1,9 @@
 # Year curves of the run feeders and common days
 
-`dxsew.texas.curves` rebuilds the 15-minute year curve of every run feeder from the coupling's own recipe and building files (decision K66), checks each one against the coupling's peak days, sums the curves of each stratum (K47 as amended by K60) and chooses common days per stratum and season (K48 as amended by K60, K67). The code is in `src/dxsew/texas/curves.py` and its tests are in `tests/texas/test_texas_curves.py`.
+`dxsew.curves.year` rebuilds the 15-minute year curve of every run feeder from the coupling's own recipe and building files (decision K66), checks each one against the coupling's peak days, sums the curves of each stratum (K47 as amended by K60) and chooses common days per stratum and season (K48 as amended by K60, K67). The code is in `dxsew/curves/year.py` and its tests are in `tests/regression/test_curves.py`.
 
 ```
-uv run python -m dxsew.texas.curves --stamp <stamp> --typical <typical_feeders csv> --runs-root <folder> \
+uv run python -m dxsew.curves.year --stamp <stamp> --typical <typical_feeders csv> --runs-root <folder> \
     --features <features parquet> [--fit-target <parquet>] [--workers <n>]
 ```
 

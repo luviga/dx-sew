@@ -23,7 +23,7 @@ The run also checks the result. It reports annual energy, peak and minimum with 
 
 ## Sources
 
-All retrieved on 11 November 2026. The download URLs are listed in `configs/sources.yaml`.
+All retrieved on 11 November 2026. The download URLs are listed in `config/sources.yaml`.
 
 - **Hourly demand `D_t`.** EIA-930 six-month Balance files for 2018, January to June and July to December, rows of balancing authority `ERCO`. Files: https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_BALANCE_2018_Jan_Jun.csv and https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_BALANCE_2018_Jul_Dec.csv, listed in https://www.eia.gov/electricity/gridmonitor/sixMonthFiles/EIA930_File_List_Meta.csv, which feeds the Download Data window of the Hourly Electric Grid Monitor. The demand is EIA's column "Demand (MW) (Adjusted)", because the files have it. The run records every hour where it differs from the reported column "Demand (MW)". Timestamps come from the column "UTC Time at End of Hour". The local-time column is used only as a check. What EIA-930 demand is: https://www.eia.gov/electricity/930-content/about.html.
 - **Loss share `lambda`.** EIA State Electricity Profile for Texas, full data tables, worksheet 10, Supply and disposition of electricity, year 2018: https://www.eia.gov/electricity/state/xls/SEP%20Tables%20for%20TX.xlsx, linked as "Full data tables" from https://www.eia.gov/electricity/state/texas/. EIA's loss-share formula: https://www.eia.gov/tools/faqs/faq.php?id=105.
@@ -44,8 +44,8 @@ The run fills the bracketed values with the computed numbers and writes the fill
 
 ```
 uv sync
-cp configs/local.yaml.example configs/local.yaml   # set data_root
-uv run python -m dxsew.fit_target
+cp config/local.yaml.example config/local.yaml   # set data_root
+uv run python -m dxsew.fit.target
 ```
 
 The run downloads any missing source file into `<data_root>/eia/` and reuses a file already there when its size matches what the server reports. It writes to `<data_root>/derived/`:

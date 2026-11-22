@@ -1,6 +1,6 @@
 # Frame procedure for any balancing area
 
-This note gives the frame procedure of dx-sew so it can be applied to a balancing area other than ERCOT. The frame is the list of SMART-DS substations from which a sample is drawn. The procedure is written once; an area enters it through three names and a few settings. The Texas sample applies it with the ERCOT names; [texas_sample.md](texas_sample.md) has the details of every Texas step, and the per-area settings are in `configs/veto_areas.yaml`.
+This note gives the frame procedure of dx-sew so it can be applied to a balancing area other than ERCOT. The frame is the list of SMART-DS substations from which a sample is drawn. The procedure is written once; an area enters it through three names and a few settings. The Texas sample applies it with the ERCOT names; [texas_sample.md](texas_sample.md) has the details of every Texas step, and the per-area settings are in `config/areas.yaml`.
 
 ## Steps
 
@@ -36,7 +36,7 @@ Standard outputs, written before anything is applied: the county table (every co
 The veto can also be run alone, with no SMART-DS data, for the counties of an area's states:
 
 ```
-uv run python -m dxsew.veto --areas configs/veto_areas.yaml --area <name> --stamp <stamp>
+uv run python -m dxsew.frame.veto --areas config/areas.yaml --area <name> --stamp <stamp>
 ```
 
 It writes `veto_area_<name>_<stamp>.csv` (one row per county: Census code, the share of the county inside polygons of the prefix, the veto with and without the lookups, the utility marks and a class) and `veto_lookups_<name>_<stamp>.csv`. The class sorts counties by the map and the veto: `map_in_veto_out`, `map_in_kept`, `map_out_utilities_in` and `map_out`. A county counts as in the map when at least half of its area lies inside the polygons of the prefix; that threshold is an ASSUMPTION of the report only, and shares are computed on longitude and latitude degrees (ASSUMPTION: within one county this differs from an equal-area share by a negligible amount). The report changes no frame.
@@ -51,7 +51,7 @@ Within each stratum the substations are ordered by load count and drawn by syste
 
 ### 6. Staging and runs at the coupling pin
 
-The sampled substations are staged with digit-only load shape names, checked, and run with DeltaE/dss-eulp-coupling at the one commit recorded in `configs/coupling_pin.yaml`. See [texas_sample.md](texas_sample.md), steps 6 to 8, and [coupling.md](coupling.md).
+The sampled substations are staged with digit-only load shape names, checked, and run with DeltaE/dss-eulp-coupling at the one commit recorded in `config/coupling_pin.yaml`. See [texas_sample.md](texas_sample.md), steps 6 to 8, and [coupling.md](coupling.md).
 
 ## The three names per area
 

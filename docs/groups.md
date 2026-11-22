@@ -6,11 +6,11 @@ The circuits are SMART-DS v0.9, Full Texas, 2018, on the OEDI data lake: https:/
 
 ## Commands
 
-From the repository, with `configs/local.yaml` in place:
+From the repository, with `config/local.yaml` in place:
 
 ```
-uv run python -m dxsew.texas.features --stamp <stamp> --frame-stamp <frame stamp> [--workers 16] [--processes 8]
-uv run python -m dxsew.texas.groups --stamp <stamp> --features-stamp <stamp> [--sample-stamp <sample stamp>]
+uv run python -m dxsew.frame.features --stamp <stamp> --frame-stamp <frame stamp> [--workers 16] [--processes 8]
+uv run python -m dxsew.frame.groups --stamp <stamp> --features-stamp <stamp> [--sample-stamp <sample stamp>]
 ```
 
 `--workers` is the number of download threads and `--processes` the number of reader processes. `--sample-stamp` names `sample_<stamp>.csv` of the sample job, for the check-set candidates. Every output goes to `<data_root>/texas/`; nothing is written into the repository.
@@ -130,7 +130,7 @@ Two staged substations run in full in the coupling as the check set (K60). For e
 
 ## Settings
 
-All in the block `groups` of `configs/texas_sample.yaml`.
+All in the block `groups` of `config/setups/ercot_2018.yaml`.
 
 | Setting | Value | ASSUMPTION |
 |---|---|---|
