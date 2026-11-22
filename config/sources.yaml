@@ -20,3 +20,7 @@ eia_state_profile_tx:
   found_on: https://www.eia.gov/electricity/state/texas/state_tables.php
   found_via: Texas State Electricity Profile, link Full data tables (https://www.eia.gov/electricity/state/texas/)
   retrieved: 2026-11-11
+cb_2018_48_tract_500k:
+  url: https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_48_tract_500k.zip
+  found_on: https://www.census.gov/geographies/mapping-files/time-series/geo/carto-boundary-file.2018.html
+  retrieved: 2026-11-21

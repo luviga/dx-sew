@@ -132,7 +132,7 @@ def echo(line: str, stream=None) -> None:
 
 def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = None,
              python: Path | None = None, log: Path | None = None, pin: dict | None = None,
-             phase: str | None = None, check: bool = True) -> int:
+             phase: str | None = None, check: bool = True, quiet: bool = False) -> int:
     """Check the pin, run the case with the coupling's ``run_case.py``, check the pin again.
 
     Every output line is printed and, when ``log`` is given, written there with
@@ -142,7 +142,8 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
     ``phase`` runs that one phase (``--phase``) instead of ``--all``. With
     ``check=False`` neither pin check runs: the caller checks the pin before and
     after a batch, because ``git status`` takes the clone's index lock for a
-    moment and two checks at once can collide.
+    moment and two checks at once can collide. With ``quiet=True`` the lines go
+    to ``log`` only, not to the console, so runs at once do not mix their output.
     """
     if repo is None or python is None:
         local = read_local()
@@ -160,7 +161,8 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
         process = subprocess.Popen(cmd, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
         for line in process.stdout:
-            echo(line)
+            if not quiet:
+                echo(line)
             if handle:
                 handle.write(f"{datetime.now(timezone.utc).isoformat(timespec='milliseconds')} {line}")
                 handle.flush()
