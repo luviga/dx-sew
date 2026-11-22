@@ -9,8 +9,13 @@ shows that the run wrote nothing tracked or untracked in the clone.
 
 Run from the repository::
 
-    uv run python -m dxsew.coupling --case <case.yaml> --settings <folder> [--season summer|winter] [--log <file>]
+    uv run python -m dxsew.coupling --case <case.yaml> --settings <folder> [--season summer|winter] [--log <file>]         [--phase <id>] [--no-check]
     uv run python -m dxsew.coupling --check-only
+
+``--phase <id>`` runs one phase of the coupling's phase order instead of all of
+them. ``--no-check`` skips both pin checks; the caller then checks the pin
+around a batch of runs, so that several runs at once never take the clone's git
+index lock together.
 
 Coupling repository: https://github.com/DeltaE/dss-eulp-coupling (``run_case.py``,
 README sections "Settings from a caller" and "Peak-day rules").
@@ -96,12 +101,18 @@ def check_pin(repo: Path, pin: dict | None = None) -> str:
     return head
 
 
-def command(case: Path, settings: Path, python: Path, seasons=SEASONS) -> list[str]:
-    """``run_case.py`` command line for all phases of the case in the seasons given."""
+def command(case: Path, settings: Path, python: Path, seasons=SEASONS, phase: str | None = None) -> list[str]:
+    """``run_case.py`` command line for the case in the seasons given.
+
+    All phases (``--all``) by default; one phase (``--phase <phase>``) when ``phase`` is given.
+    """
     seasons = list(seasons)
     if not seasons or any(season not in SEASONS for season in seasons):
         raise ValueError(f"seasons must be taken from {SEASONS}")
-    cmd = [str(python), "run_case.py", "--case", str(Path(case).resolve()), "--all",
+    if phase is not None and not str(phase).strip():
+        raise ValueError("phase must be a phase id such as pre, 1 or 5b")
+    which = ["--all"] if phase is None else ["--phase", str(phase)]
+    cmd = [str(python), "run_case.py", "--case", str(Path(case).resolve()), *which,
            "--settings", str(Path(settings).resolve())]
     if len(set(seasons)) == 1:
         cmd += ["--season", seasons[0]]
@@ -120,20 +131,27 @@ def echo(line: str, stream=None) -> None:
 
 
 def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = None,
-             python: Path | None = None, log: Path | None = None, pin: dict | None = None) -> int:
+             python: Path | None = None, log: Path | None = None, pin: dict | None = None,
+             phase: str | None = None, check: bool = True) -> int:
     """Check the pin, run the case with the coupling's ``run_case.py``, check the pin again.
 
     Every output line is printed and, when ``log`` is given, written there with
     the UTC time it arrived. Returns the exit code of ``run_case.py``; the second
     pin check raises ``PinError`` whatever the exit code.
+
+    ``phase`` runs that one phase (``--phase``) instead of ``--all``. With
+    ``check=False`` neither pin check runs: the caller checks the pin before and
+    after a batch, because ``git status`` takes the clone's index lock for a
+    moment and two checks at once can collide.
     """
     if repo is None or python is None:
         local = read_local()
         repo = Path(repo or local["coupling_repo"])
         python = Path(python or local["coupling_python"])
     repo = Path(repo).resolve()
-    check_pin(repo, pin)
-    cmd = command(case, settings, python, seasons)
+    if check:
+        check_pin(repo, pin)
+    cmd = command(case, settings, python, seasons, phase)
     handle = Path(log).open("a", encoding="utf-8") if log else None
     try:
         # Unbuffered output lets every line reach the log when it is printed, so the
@@ -150,7 +168,8 @@ def run_case(case: Path, settings: Path, seasons=SEASONS, repo: Path | None = No
     finally:
         if handle:
             handle.close()
-    check_pin(repo, pin)
+    if check:
+        check_pin(repo, pin)
     return code
 
 
@@ -160,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--settings", type=Path, help="settings folder of the case")
     parser.add_argument("--season", choices=SEASONS, action="append", help="season; default both")
     parser.add_argument("--log", type=Path, default=None, help="file that receives the timed output lines")
+    parser.add_argument("--phase", default=None, help="run this one phase id (pre, 1, ..., 5b) instead of all")
+    parser.add_argument("--no-check", action="store_true",
+                        help="skip both pin checks; the caller checks the pin around a batch")
     parser.add_argument("--check-only", action="store_true", help="check the pin and run nothing")
     args = parser.parse_args(argv)
     local = read_local()
@@ -168,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.case or not args.settings:
         parser.error("--case and --settings are required unless --check-only is given")
-    return run_case(args.case, args.settings, args.season or SEASONS, log=args.log)
+    return run_case(args.case, args.settings, args.season or SEASONS, log=args.log, phase=args.phase,
+                    check=not args.no_check)
 
 
 if __name__ == "__main__":
