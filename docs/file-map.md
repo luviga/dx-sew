@@ -60,13 +60,18 @@ Every tracked file of the repository and every kind of generated file, with what
 | `dxsew/frame/features.py` | Features of every frame feeder | `<out>/features_<stamp>.parquet` |
 | `dxsew/frame/groups.py` | Groups, dial, typical feeders | see generated files |
 | `dxsew/curves/year.py` | Year curves of the run feeders and common days | `<out>/curves_<stamp>/` |
+| `dxsew/curves/mix.py` | Baseline reproduction, mix curves and their checks for the trial | `<out>/trial_<stamp>/` |
+| `dxsew/assembly/substations.py` | Substation transformers and ratings; baseline assembly, loading, apartment bands, check set | `<out>/substation_*_<stamp>.csv`, `substations_`, `overload_counts_`, `loading_bands_`, `loading_band_summary_`, `check_set_` |
 | `dxsew/fit/target.py` | Hourly fit target | `<data_root>/derived/` |
 | `dxsew/fit/weights.py` | Fit of the weights and sector factors | `<out>/fit_<stamp>/` |
 | `dxsew/runs/stage.py` | Staging with digit-only names | `<smart_ds_base>/<staging.folder>/`, `<out>/` |
 | `dxsew/runs/settings.py` | Settings folder and cases of staged substations | `<out>/coupling_settings_<stamp>/`, `<out>/cases_<stamp>/` |
 | `dxsew/runs/cases.py` | Run feeders alone: staging, alone trees, settings, cases, dry run | `<smart_ds_base>/<runs.*_folder>/`, `<out>/` |
 | `dxsew/runs/coupling.py` | Pin check and runs of the coupling | the log file given |
-| `dxsew/frame/__init__.py`, `dxsew/curves/__init__.py`, `dxsew/fit/__init__.py`, `dxsew/runs/__init__.py` | Package markers | |
+| `dxsew/runs/trial.py` | Settings folders and cases of the trial, one set per pass; dry runs | `<out>/coupling_settings_trial_<pass>_<stamp>/`, `<out>/cases_trial_<pass>_<stamp>/`, `<out>/trial_cases_<stamp>.csv` |
+| `dxsew/runs/batch.py` | Batches of coupling calls under schedule C | `<out>/batch_<name>_<stamp>.csv`, `batch_<name>_<stamp>_machine.csv`, per-call logs |
+| `dxsew/runs/results.py` | Feeder results of the trial's power flows | `<out>/trial_feeders_<stamp>.csv` |
+| `dxsew/frame/__init__.py`, `dxsew/curves/__init__.py`, `dxsew/fit/__init__.py`, `dxsew/runs/__init__.py`, `dxsew/assembly/__init__.py` | Package markers | |
 
 ### docs/
 
@@ -82,13 +87,15 @@ Every tracked file of the repository and every kind of generated file, with what
 | `docs/runs.md` | Run feeders alone through the coupling |
 | `docs/coupling.md` | The coupling pin and how it is run |
 | `docs/curves.md` | Year curves and common days |
+| `docs/trial.md` | The power-flow trial: cases, passes, settings, schedule C, batch table |
+| `docs/assembly.md` | Substation ratings, baseline assembly, loading, apartment bands, check set |
 | `docs/fit_target.md` | Fit target |
 | `docs/fit.md` | Fit of the weights and sector factors |
 | `docs/problem_log.csv` | Problems found while running the coupling or building its inputs |
 
 ### tests/regression/
 
-One test file per module or step, run with `uv run pytest`: `test_ba.py`, `test_config.py`, `test_coupling.py`, `test_curves.py`, `test_dss.py`, `test_features.py`, `test_fit.py`, `test_fit_target.py`, `test_frame_veto.py`, `test_geo.py`, `test_groups.py`, `test_import.py`, `test_names.py`, `test_runs.py`, `test_sample.py`, `test_settings.py`, `test_trust.py`, `test_veto.py`, and `test_no_data_in_code.py`, the scan that fails if any `.py` file of `dxsew/` holds data.
+One test file per module or step, run with `uv run pytest`: `test_ba.py`, `test_config.py`, `test_coupling.py`, `test_curves.py`, `test_dss.py`, `test_features.py`, `test_fit.py`, `test_fit_target.py`, `test_frame_veto.py`, `test_geo.py`, `test_groups.py`, `test_import.py`, `test_names.py`, `test_runs.py`, `test_sample.py`, `test_settings.py`, `test_trust.py`, `test_veto.py`, `test_batch.py`, `test_trial.py`, and `test_no_data_in_code.py`, the scan that fails if any `.py` file of `dxsew/` holds data.
 
 ## Generated files
 
@@ -117,5 +124,12 @@ Every name carries the UTC stamp of its run (`<stamp>`, `YYYYMMDDTHHMMSSZ`) exce
 | `<out>/coupling_settings_runs_<stamp>/`, `<out>/cases_runs_<stamp>/` | `cases` | `runs.coupling`, `curves.year` (copied into each run folder) |
 | runs folder of the coupling (`runs_root`) | the coupling | `curves.year` |
 | `<out>/curves_<stamp>/curves_check.csv`, `timestamps.csv`, `feeder_curves.parquet`, `strata.csv`, `stratum_curves.parquet`, `feeder_peaks.csv`, `common_days.csv`, `given_days_A_<stamp>.csv`, `given_days_B_<stamp>.csv` | `curves.year` | `fit.weights` (curves), the coupling (given days) |
+| `<out>/coupling_settings_trial_<pass>_<stamp>/`, `<out>/cases_trial_<pass>_<stamp>/`, `trial_cases_<stamp>.csv`, `dry_run_trial_<pass>_<case>_<stamp>.txt` | `runs.trial` | `runs.batch`, the coupling, `curves.mix`, `runs.results` |
+| `<out>/batch_<name>_<stamp>.csv`, `batch_<name>_<stamp>_machine.csv` | `runs.batch` | `runs.results`, people |
+| `<out>/trial_<stamp>/curves_repro.csv`, `baseline_curves.parquet`, `mix_curves.parquet`, `mix_checks.csv`, `mix_days.csv` | `curves.mix` | `assembly.substations` (check set), people |
+| `<out>/trial_feeders_<stamp>.csv` | `runs.results` | `assembly.substations` (context only), people |
+| `<out>/substation_transformers_<stamp>.csv`, `substation_ratings_`, `substation_rating_counts_` | `assembly.substations ratings` | `assembly.substations assemble`, people |
+| `<data_root>/census/<tract boundary zip>` | `assembly.substations assemble` | `assembly.substations assemble` |
+| `<out>/substations_<stamp>.csv`, `overload_counts_`, `loading_bands_`, `loading_band_summary_`, `check_set_` | `assembly.substations assemble` | people |
 | `<data_root>/derived/<balancing_area>_<year>_fit_target.parquet`, `.csv`, `_summary.json` | `fit.target` | `curves.year`, `fit.weights` |
 | `<out>/fit_<stamp>/hourly.parquet`, `weights.csv`, `errors.csv`, `months.csv`, `hours_left_out.csv`, `sector_factors.csv`, `summary.json` | `fit.weights` | people, later jobs |
