@@ -1,5 +1,7 @@
 # Feeder features, nested groups and typical feeders
 
+The method of decision K76, one representative per group weighted by load kW and added one at a time, is in [representatives.md](representatives.md).
+
 Paper 1 describes every feeder of the ERCOT frame with cheap features read from its circuit text files, groups the feeders inside each stratum with one nested tree, takes one real feeder per group as its typical feeder, and gives each group a starting weight (decision K60). Later jobs simulate only the typical feeders. The method runs at the current coupling pin; feeders the coupling cannot run are flagged and never chosen, and every problem goes to [problem_log.csv](problem_log.csv) (decision K61). A group with no runnable feeder takes the nearest group's typical feeder as a marked placeholder, so later jobs run end to end; dx-sew builds no workaround for the coupling's problems (decision K62).
 
 The circuits are SMART-DS v0.9, Full Texas, 2018, on the OEDI data lake: https://data.openei.org/submissions/2981 . The frame is the one of [texas_sample.md](texas_sample.md) and [frame_procedure.md](frame_procedure.md). No circuit is compiled and no power flow runs: every file is read as text.

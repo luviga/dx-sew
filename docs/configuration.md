@@ -201,6 +201,22 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 | `homes_column`, `occupied_column` | Columns of the coverage files with the frame's homes and the ACS occupied units, for the ratio of each band |
 | `tracts_url` | The 2018 cartographic boundary file of the state's census tracts (also in `config/sources.yaml`) |
 
+### `representatives`
+
+The order of the representatives, their groups and their weights by load kW (decision K76); method note [representatives.md](representatives.md).
+
+| Key | Meaning |
+|---|---|
+| `order_rules` | Rules that choose the next group to split: `ward_drop` and `load_weighted_drop` |
+| `eligible` | Feeders that can be a representative: `all` (every feeder in grouping) or `runnable_alone`; a feeder whose `load_kw` is 0 never is. With its ASSUMPTION sentence |
+| `weight` | Weight of a group: `load_kw_share`, its `load_kw` over its representative's (decision K76) |
+| `max_representatives` | Largest number of representatives of the order, with its ASSUMPTION sentence |
+| `check_quantities` | Columns of the feature table whose sums the weighted representatives are checked against, with its ASSUMPTION sentence |
+| `head_start_curves_stamp` | Stamp of the year curves of the run feeders used by the head start; null skips it |
+| `head_start_weights` | Weights compared in the head start: `load_kw` and `customers` of the group over those of its representative |
+| `report_steps` | Numbers of representatives at which the pin table is written, with its ASSUMPTION sentence |
+| `gate_weight_tolerance`, `gate_zero_tolerance` | Tolerances of the gates: weights times representative load against the stratum's load (relative), and explained not falling and the head start exact with every feeder its own group |
+
 ## `config/areas.yaml`
 
 `areas`: a list of areas, each with `name` (in output file names), `states` (postal codes), `rto` (column of the RTO group of the EIA-861 utility data file), `ba_code` (balancing authority code on the EIA-861 sales rows), `ba_prefix` (start of the area's polygon names on the map) and `veto_ignore_marks`.
