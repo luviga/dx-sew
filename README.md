@@ -6,7 +6,7 @@ The layout follows [OSTRAM](https://github.com/Climate-Lead-Group/OSTRAM) (decis
 
 ## Folder layout
 
-- `dxsew/`: the Python package, region-neutral. Subpackages `sources` (readers of the public data), `frame` (veto, map, sample, trust checks, features, groups), `curves` (year curves and common days), `fit` (fit target and weights) and `runs` (staging, coupling settings, cases and the coupling at its pin).
+- `dxsew/`: the Python package, region-neutral. Subpackages `sources` (readers of the public data), `frame` (veto, map, sample, trust checks, features, groups, representatives and their scout), `curves` (year curves and common days), `fit` (fit target and weights), `runs` (staging, coupling settings, cases and the coupling at its pin) and `assembly` (substation transformers, ratings and the baseline assembly).
 - `config/`: settings. `config/setups/registry.json` names the setups and the default one; `config/setups/ercot_2018.yaml` holds every value of ERCOT in 2018; `areas.yaml`, `units.yaml`, `runtime.yaml` and `scan.yaml` hold for every setup. Copy `config/local.yaml.example` to `config/local.yaml` and set the paths of your machine; `config/local.yaml` is not tracked.
 - `inputs/`: small sourced tables (zone codes of the SMART-DS load shape names, state FIPS codes).
 - `tests/regression/`: tests, run with pytest. No test touches the network.
@@ -35,6 +35,9 @@ Every feeder of the ERCOT frame is described by features read from its circuit t
 | Staging | `uv run python -m dxsew.runs.stage` | [texas_sample.md](docs/texas_sample.md) |
 | Coupling settings | `uv run python -m dxsew.runs.settings` | [coupling.md](docs/coupling.md) |
 | Features and groups | `uv run python -m dxsew.frame.features`, `uv run python -m dxsew.frame.groups` | [groups.md](docs/groups.md) |
+| Representatives and their weights | `uv run python -m dxsew.frame.representatives --stamp <stamp> --features-stamp <stamp>` | [representatives.md](docs/representatives.md) |
+| Scout of the representative choice | `uv run python -m dxsew.frame.representatives_scout --stamp <stamp> --features-stamp <stamp> --reference-stamp <stamp>` | [representatives.md](docs/representatives.md) |
+| Substation ratings and assembly | `uv run python -m dxsew.assembly.substations ratings`, `uv run python -m dxsew.assembly.substations assemble` | [assembly.md](docs/assembly.md) |
 | Run feeders | `uv run python -m dxsew.runs.cases` | [runs.md](docs/runs.md) |
 | One coupling case | `uv run python -m dxsew.runs.coupling` | [coupling.md](docs/coupling.md) |
 | Year curves and days | `uv run python -m dxsew.curves.year` | [curves.md](docs/curves.md) |

@@ -6,6 +6,9 @@ Day A
 Day B
 : For a season, the day of the balancing area's observed seasonal peak, from the fit target's demand, by Central Standard Time hour ending ([curves.md](curves.md)).
 
+Average feeder
+: For a group, one made-up row of the feature table: for each count, the group's total over its number of feeders; for each ratio, the group's ratio of totals; for the commercial kW share, the group's commercial kW over its kW; for the primary voltage, the group's mean (setup key `representatives_scout.average_feeder`). Under the representative choice `average_feeder` the representative is the real feeder nearest it on the scaled features (decision K77) ([representatives.md](representatives.md)).
+
 Check set
 : Substations run whole through the coupling beside the run feeders (setup key `trial.check_set`), to set the group curves scaled by customers against a substation's own run (decision K73) ([assembly.md](assembly.md)).
 
@@ -31,7 +34,10 @@ Regulator
 : A transformer of a substation folder's `Transformers.dss` whose windings all carry the same kV; it adds nothing to the substation's rating ([assembly.md](assembly.md)).
 
 Representative
-: The one real feeder that stands for a group in the method of decision K76: the eligible feeder nearest the group's centre when the group was formed, kept through later splits by the child that holds it. Representatives are added one at a time and never dropped ([representatives.md](representatives.md)).
+: The one real feeder that stands for a group in the method of decision K76: the eligible feeder nearest the group's target point (its centre under the default representative choice) when the group was formed, kept through later splits by the child that holds it. Representatives are added one at a time and never dropped ([representatives.md](representatives.md)).
+
+Representative choice
+: The rule that sets the target point a new group's representative is nearest to (setup key `representatives.representative_choice`): `centre`, the unweighted mean of the members' scaled features (the default); `load_weighted_centre`, the same mean weighted by load kW; or `average_feeder`, the group's average feeder, scaled as the frame was (decision K77) ([representatives.md](representatives.md)).
 
 Run feeder
 : The feeder run through the coupling for a group: its typical feeder, or its placeholder when it has none. Several groups can share one run feeder ([runs.md](runs.md)).

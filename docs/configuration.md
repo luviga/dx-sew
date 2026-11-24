@@ -210,12 +210,24 @@ The order of the representatives, their groups and their weights by load kW (dec
 | `order_rules` | Rules that choose the next group to split: `ward_drop` and `load_weighted_drop` |
 | `eligible` | Feeders that can be a representative: `all` (every feeder in grouping) or `runnable_alone`; a feeder whose `load_kw` is 0 never is. With its ASSUMPTION sentence |
 | `weight` | Weight of a group: `load_kw_share`, its `load_kw` over its representative's (decision K76) |
+| `representative_choice` | Rule that picks a new group's representative, the eligible feeder nearest the group's target point: `centre` (the default, the rule of decision K76), `load_weighted_centre` or `average_feeder` (decision K77) |
 | `max_representatives` | Largest number of representatives of the order, with its ASSUMPTION sentence |
 | `check_quantities` | Columns of the feature table whose sums the weighted representatives are checked against, with its ASSUMPTION sentence |
 | `head_start_curves_stamp` | Stamp of the year curves of the run feeders used by the head start; null skips it |
 | `head_start_weights` | Weights compared in the head start: `load_kw` and `customers` of the group over those of its representative |
 | `report_steps` | Numbers of representatives at which the pin table is written, with its ASSUMPTION sentence |
 | `gate_weight_tolerance`, `gate_zero_tolerance` | Tolerances of the gates: weights times representative load against the stratum's load (relative), and explained not falling and the head start exact with every feeder its own group |
+
+### `representatives_scout`
+
+The scout of the representative choice, the order rule and a regulator feature (decision K77), command `dxsew.frame.representatives_scout`; method note [representatives.md](representatives.md). It measures only; the defaults stay in the block `representatives`.
+
+| Key | Meaning |
+|---|---|
+| `choices` | Representative choices compared: some of `centre`, `load_weighted_centre`, `average_feeder` |
+| `feature_sets` | Map from a feature set's name to the features added to `groups.features` for its sequences (an empty list adds none), with its ASSUMPTION sentence |
+| `average_feeder` | How a group's average feeder is built from the feature table, one entry per column a feature reads: `mean` (list of columns), `ratio` (column: `[numerator, denominator]`) and `weighted_mean` (column: weight column), with its ASSUMPTION sentence |
+| `head_start_weight` | Weight of the scout's head start, one of `representatives.head_start_weights` |
 
 ## `config/areas.yaml`
 

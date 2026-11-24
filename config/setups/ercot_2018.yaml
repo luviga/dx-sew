@@ -4,7 +4,7 @@
 # source or its ASSUMPTION sentence. A key <key>_assumption holds the
 # ASSUMPTION sentence of <key> or of the step it names. Keys:
 # docs/configuration.md. Method notes: docs/texas_sample.md, docs/groups.md,
-# docs/curves.md, docs/fit_target.md, docs/fit.md.
+# docs/curves.md, docs/fit_target.md, docs/fit.md, docs/representatives.md.
 
 setup_id: "ercot_2018"
 # Name of the area in config/areas.yaml; the loader checks that the area's
