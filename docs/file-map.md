@@ -59,7 +59,8 @@ Every tracked file of the repository and every kind of generated file, with what
 | `dxsew/frame/trust.py` | Four checks of the map | `<out>/trust_*_<stamp>.csv` |
 | `dxsew/frame/features.py` | Features of every frame feeder | `<out>/features_<stamp>.parquet` |
 | `dxsew/frame/groups.py` | Groups, dial, typical feeders | see generated files |
-| `dxsew/frame/representatives.py` | Order of the representatives, their groups and weights by load kW, checks with no building run, head start (decision K76) | see generated files |
+| `dxsew/frame/representatives.py` | Order of the representatives, their groups and weights by load kW, checks with no building run, head start (decision K76); the representative choice (decision K77) | see generated files |
+| `dxsew/frame/representatives_scout.py` | Scout of the representative choice, the order rule and a regulator feature (decision K77) | see generated files |
 | `dxsew/curves/year.py` | Year curves of the run feeders and common days | `<out>/curves_<stamp>/` |
 | `dxsew/curves/mix.py` | Baseline reproduction, mix curves and their checks for the trial | `<out>/trial_<stamp>/` |
 | `dxsew/assembly/substations.py` | Substation transformers and ratings; baseline assembly, loading, apartment bands, check set | `<out>/substation_*_<stamp>.csv`, `substations_`, `overload_counts_`, `loading_bands_`, `loading_band_summary_`, `check_set_` |
@@ -85,7 +86,7 @@ Every tracked file of the repository and every kind of generated file, with what
 | `docs/frame_procedure.md` | Frame procedure for any balancing area |
 | `docs/texas_sample.md` | Sample, trust checks, staging and coupling settings of the ERCOT setup |
 | `docs/groups.md` | Features, groups, dial, typical feeders |
-| `docs/representatives.md` | Order of the representatives, their weights by load kW, checks and head start (decision K76) |
+| `docs/representatives.md` | Order of the representatives, their weights by load kW, checks and head start (decision K76); the representative choice and the scout (decision K77) |
 | `docs/runs.md` | Run feeders alone through the coupling |
 | `docs/coupling.md` | The coupling pin and how it is run |
 | `docs/curves.md` | Year curves and common days |
@@ -97,7 +98,7 @@ Every tracked file of the repository and every kind of generated file, with what
 
 ### tests/regression/
 
-One test file per module or step, run with `uv run pytest`: `test_ba.py`, `test_config.py`, `test_coupling.py`, `test_curves.py`, `test_dss.py`, `test_features.py`, `test_fit.py`, `test_fit_target.py`, `test_frame_veto.py`, `test_geo.py`, `test_groups.py`, `test_import.py`, `test_names.py`, `test_representatives.py`, `test_runs.py`, `test_sample.py`, `test_settings.py`, `test_trust.py`, `test_veto.py`, `test_batch.py`, `test_trial.py`, and `test_no_data_in_code.py`, the scan that fails if any `.py` file of `dxsew/` holds data.
+One test file per module or step, run with `uv run pytest`: `test_ba.py`, `test_config.py`, `test_coupling.py`, `test_curves.py`, `test_dss.py`, `test_features.py`, `test_fit.py`, `test_fit_target.py`, `test_frame_veto.py`, `test_geo.py`, `test_groups.py`, `test_import.py`, `test_names.py`, `test_representatives.py`, `test_representatives_scout.py`, `test_runs.py`, `test_sample.py`, `test_settings.py`, `test_trust.py`, `test_veto.py`, `test_batch.py`, `test_trial.py`, and `test_no_data_in_code.py`, the scan that fails if any `.py` file of `dxsew/` holds data.
 
 ## Generated files
 
@@ -119,14 +120,15 @@ Every name carries the UTC stamp of its run (`<stamp>`, `YYYYMMDDTHHMMSSZ`) exce
 | `<smart_ds_base>/<staging.folder>/` (staged tree, parquets, `name_map.csv`) | `stage` | the coupling |
 | `<out>/name_map_<stamp>.csv`, `staging_<stamp>.csv`, `checks_<stamp>.csv`, `left_sample_<stamp>.csv`, `parquets_shared_with_left_<stamp>.csv` | `stage` | `settings`, people |
 | `<out>/coupling_settings_<stamp>/`, `<out>/cases_<stamp>/` | `settings` | `runs.coupling` |
-| `<out>/features_<stamp>.parquet`, `missing_network_files_<stamp>.csv` | `features` | `groups`, `representatives`, `cases`, `curves.year`, `fit.weights` |
+| `<out>/features_<stamp>.parquet`, `missing_network_files_<stamp>.csv` | `features` | `groups`, `representatives`, `representatives_scout`, `cases`, `curves.year`, `fit.weights` |
 | `<out>/groups_<stamp>.parquet`, `group_table_`, `explained_`, `dial_`, `small_groups_`, `typical_feeders_`, `check_set_candidates_` | `groups` | `cases`, `curves.year`, `fit.weights` (typical feeders) |
-| `<out>/representatives_steps_<stamp>.csv`, `representatives_<stamp>.parquet`, `representatives_groups_<stamp>.parquet`, `representatives_errors_<stamp>.csv`, `representatives_pin_<stamp>.csv`, `head_start_feeders_<stamp>.csv`, `head_start_summary_<stamp>.csv`, `head_start_errors_<stamp>.csv` | `representatives` | people, later jobs |
+| `<out>/representatives_steps_<stamp>.csv`, `representatives_<stamp>.parquet`, `representatives_groups_<stamp>.parquet`, `representatives_errors_<stamp>.csv`, `representatives_pin_<stamp>.csv`, `head_start_feeders_<stamp>.csv`, `head_start_summary_<stamp>.csv`, `head_start_errors_<stamp>.csv`, `representatives_assumptions_<stamp>.csv` | `representatives` | people, later jobs; `representatives_scout` (`representatives_`, `representatives_errors_` and `head_start_errors_` of the reference stamp) |
+| `<out>/scout_representatives_<stamp>.parquet`, `scout_errors_<stamp>.csv`, `scout_steps_<stamp>.csv`, `scout_head_start_<stamp>.csv`, `scout_repick_<stamp>.csv`, `scout_assumptions_<stamp>.csv` | `representatives_scout` | people |
 | `<smart_ds_base>/<runs.staging_folder>/`, `<smart_ds_base>/<runs.alone_folder>/` | `cases` | the coupling |
 | `<out>/staging_runs_<stamp>.csv`, `checks_runs_`, `name_map_runs_`, `runs_`, `dry_run_runs_<stamp>.txt` | `cases` | people |
 | `<out>/coupling_settings_runs_<stamp>/`, `<out>/cases_runs_<stamp>/` | `cases` | `runs.coupling`, `curves.year` (copied into each run folder) |
 | runs folder of the coupling (`runs_root`) | the coupling | `curves.year` |
-| `<out>/curves_<stamp>/curves_check.csv`, `timestamps.csv`, `feeder_curves.parquet`, `strata.csv`, `stratum_curves.parquet`, `feeder_peaks.csv`, `common_days.csv`, `given_days_A_<stamp>.csv`, `given_days_B_<stamp>.csv` | `curves.year` | `fit.weights` (curves), `representatives` (head start, feeder curves), the coupling (given days) |
+| `<out>/curves_<stamp>/curves_check.csv`, `timestamps.csv`, `feeder_curves.parquet`, `strata.csv`, `stratum_curves.parquet`, `feeder_peaks.csv`, `common_days.csv`, `given_days_A_<stamp>.csv`, `given_days_B_<stamp>.csv` | `curves.year` | `fit.weights` (curves), `representatives` and `representatives_scout` (head start, feeder curves), the coupling (given days) |
 | `<out>/coupling_settings_trial_<pass>_<stamp>/`, `<out>/cases_trial_<pass>_<stamp>/`, `trial_cases_<stamp>.csv`, `dry_run_trial_<pass>_<case>_<stamp>.txt` | `runs.trial` | `runs.batch`, the coupling, `curves.mix`, `runs.results` |
 | `<out>/batch_<name>_<stamp>.csv`, `batch_<name>_<stamp>_machine.csv` | `runs.batch` | `runs.results`, people |
 | `<out>/trial_<stamp>/curves_repro.csv`, `baseline_curves.parquet`, `mix_curves.parquet`, `mix_checks.csv`, `mix_days.csv` | `curves.mix` | `assembly.substations` (check set), people |

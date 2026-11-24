@@ -69,9 +69,10 @@ SETUP_KEYS = {
     "trial": {"check_set", "passes", "timing_cases"},
     "assembly": {"sum_rel_tolerance", "share_bands", "units_5plus_columns", "units_total_column", "homes_column",
                  "occupied_column", "tracts_url"},
-    "representatives": {"order_rules", "eligible", "weight", "max_representatives", "check_quantities",
-                        "head_start_curves_stamp", "head_start_weights", "report_steps", "gate_weight_tolerance",
-                        "gate_zero_tolerance"},
+    "representatives": {"order_rules", "eligible", "weight", "representative_choice", "max_representatives",
+                        "check_quantities", "head_start_curves_stamp", "head_start_weights", "report_steps",
+                        "gate_weight_tolerance", "gate_zero_tolerance"},
+    "representatives_scout": {"choices", "feature_sets", "average_feeder", "head_start_weight"},
 }
 # Blocks that also hold the texts a run fills (runtime.yaml names.texts_key).
 BLOCKS_WITH_TEXTS = ("fit_target", "fit")

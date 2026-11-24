@@ -29,11 +29,19 @@ Reads ``<data_root>/<output_folder>/features_<features stamp>.parquet``
    order, then to the lower group number. Stop at ``max_representatives``
    groups or when no group can be split.
 4. The representative of a group is the eligible feeder nearest the group's
-   centre (unweighted mean of the scaled features; ``groups.nearest``, ties to
-   the first name). At a split the child that holds the parent's
-   representative keeps it and the parent's group number; the other child
-   takes the next free number of its stratum and the eligible feeder nearest
-   its own centre. No representative is ever dropped.
+   target point (``groups.nearest``, ties to the first name). The target
+   point is set by ``representative_choice`` (decision K77): ``centre``, the
+   unweighted mean of the members' scaled features (the default, the rule of
+   decision K76); ``load_weighted_centre``, the same mean weighted by
+   ``load_kw``; ``average_feeder``, the group's average feeder built from the
+   feature table as ``representatives_scout.average_feeder`` says, turned
+   into features with ``groups.feature_values`` and scaled with the frame's
+   means and standard deviations kept from ``frame_z``. A group of one feeder
+   has that feeder's own point as its target. At a split the child that
+   holds the parent's representative keeps it and the parent's group number;
+   the other child takes the next free number of its stratum and the
+   eligible feeder nearest its own target point. No representative is ever
+   dropped.
 5. The weight of a group is its ``load_kw`` over its representative's
    ``load_kw`` (``weight: load_kw_share``).
 6. ``explained`` at a step: 1 minus the sum over every group of every stratum
@@ -53,8 +61,11 @@ Reads ``<data_root>/<output_folder>/features_<features stamp>.parquet``
 Writes, under ``<data_root>/<output_folder>/``: ``representatives_steps_<stamp>.csv``,
 ``representatives_<stamp>.parquet``, ``representatives_groups_<stamp>.parquet``,
 ``representatives_errors_<stamp>.csv``, ``representatives_pin_<stamp>.csv``,
-``head_start_feeders_<stamp>.csv``, ``head_start_summary_<stamp>.csv`` and
-``head_start_errors_<stamp>.csv``.
+``head_start_feeders_<stamp>.csv``, ``head_start_summary_<stamp>.csv``,
+``head_start_errors_<stamp>.csv`` and ``representatives_<texts key>_<stamp>.csv``:
+``block``, ``key`` and ``sentence`` of every key of the blocks ``groups`` and
+``representatives`` that ends in the note suffix (``names.texts_key`` and
+``names.note_suffix`` of ``config/runtime.yaml``).
 """
 
 from __future__ import annotations
@@ -72,7 +83,7 @@ from scipy.stats import spearmanr
 
 from dxsew import config
 from dxsew.config import Paths, load_local, load_runtime, load_sample_settings
-from dxsew.frame.groups import _sum_of_squares, feature_values, frame_z, nearest
+from dxsew.frame.groups import LOG, _sum_of_squares, feature_values, frame_z, nearest
 from dxsew.frame.sample import write_csv, write_parquet
 
 ORDER_RULES = ("ward_drop", "load_weighted_drop")
@@ -80,6 +91,11 @@ ELIGIBLE_RULES = ("all", "runnable_alone")
 WEIGHT_RULES = ("load_kw_share",)
 HEAD_START_WEIGHTS = ("load_kw", "customers")
 HEAD_START_RULE = "ward_drop"
+REPRESENTATIVE_CHOICES = ("centre", "load_weighted_centre", "average_feeder")
+DEFAULT_CHOICE = "centre"
+AVERAGE_RULES = ("mean", "ratio", "weighted_mean")
+ASSUMPTION_BLOCKS = ("groups", "representatives")
+ASSUMPTION_COLUMNS = ["block", "key", "sentence"]
 ALL_SCOPE = "all"
 HEAD_START_NOTE = (
     "first look only: these feeders were chosen as group centres, so they are not a random sample of the frame"
@@ -96,6 +112,19 @@ STEP_COLUMNS = [
 
 
 @dataclass
+class Scaling:
+    """Feature specs of a run and the per-column mean and standard deviation (ddof 0) ``frame_z`` used."""
+
+    specs: list[str]
+    mean: pd.Series
+    std: pd.Series
+
+    def scale(self, values: pd.DataFrame) -> pd.DataFrame:
+        """Raw feature values (columns of ``feature_values``) scaled as the frame was."""
+        return (values - self.mean) / self.std
+
+
+@dataclass
 class Stratum:
     """The feeders of one stratum in grouping, in name order, with their tree."""
 
@@ -108,6 +137,8 @@ class Stratum:
     eligible: np.ndarray
     tree: np.ndarray | None = None
     index: dict[str, int] = field(default_factory=dict)
+    table: pd.DataFrame | None = None
+    scaling: Scaling | None = None
 
     def __post_init__(self) -> None:
         self.index = {name: position for position, name in enumerate(self.names)}
@@ -155,6 +186,79 @@ def check_settings(block: dict) -> None:
         raise ValueError(f"head_start_weights must be some of {HEAD_START_WEIGHTS}")
     if int(block["max_representatives"]) < 1:
         raise ValueError("max_representatives must be at least 1")
+    choice = block.get("representative_choice", DEFAULT_CHOICE)
+    if choice not in REPRESENTATIVE_CHOICES:
+        raise ValueError(f"representative_choice must be one of {REPRESENTATIVE_CHOICES}, not {choice!r}")
+
+
+def feature_columns(specs: list[str]) -> list[str]:
+    """Columns of the feature table the specs read, in order, each once."""
+    columns = []
+    for spec in specs:
+        found = LOG.match(spec)
+        column = found.group(1) if found else spec
+        if column not in columns:
+            columns.append(column)
+    return columns
+
+
+def check_average_rule(average_rule: dict, specs: list[str]) -> None:
+    """Stop on an average-feeder rule that is not mean, ratio or weighted_mean, or misses or repeats a column."""
+    unknown = [name for name in average_rule if name not in AVERAGE_RULES]
+    if unknown:
+        raise ValueError(f"average_feeder holds {unknown}, not some of {AVERAGE_RULES}")
+    listed = [column for name in AVERAGE_RULES for column in (average_rule.get(name) or [])]
+    repeated = sorted({column for column in listed if listed.count(column) > 1})
+    missing = [column for column in feature_columns(specs) if column not in listed]
+    if repeated or missing:
+        raise ValueError(f"average_feeder repeats {repeated} and misses {missing}")
+
+
+def average_feeder_row(rows: pd.DataFrame, specs: list[str], average_rule: dict) -> pd.DataFrame:
+    """One raw row of the columns the specs read, built from a group's feature rows by ``average_rule``.
+
+    ``mean``: sum over the members over their number; ``ratio`` ``[a, b]``:
+    sum of a over sum of b; ``weighted_mean`` ``w``: sum of the value times w
+    over the sum of w. Columns no spec reads are not used.
+    """
+    check_average_rule(average_rule, specs)
+    means, ratios, weighted = (average_rule.get(name) or {} for name in AVERAGE_RULES)
+    values = {}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for column in feature_columns(specs):
+            if column in means:
+                values[column] = rows[column].astype("float64").sum() / len(rows)
+            elif column in ratios:
+                top, bottom = ratios[column]
+                values[column] = rows[top].astype("float64").sum() / rows[bottom].astype("float64").sum()
+            else:
+                weight = rows[weighted[column]].astype("float64")
+                values[column] = (rows[column].astype("float64") * weight).sum() / weight.sum()
+    return pd.DataFrame([values])
+
+
+def target_point(stratum: Stratum, members: np.ndarray, choice: str, average_rule: dict | None = None) -> np.ndarray:
+    """Point on the scaled features that a group's representative is nearest to (module note, step 4)."""
+    points = stratum.points[members]
+    if choice == DEFAULT_CHOICE:
+        return points.mean(axis=0)
+    if choice not in REPRESENTATIVE_CHOICES:
+        raise ValueError(f"representative_choice must be one of {REPRESENTATIVE_CHOICES}, not {choice!r}")
+    if len(members) == 1:
+        return points[0].copy()
+    if choice == "load_weighted_centre":
+        weights = stratum.load_kw[members]
+        total = float(weights.sum())
+        if total == 0:
+            return points.mean(axis=0)
+        return (weights[:, None] * points).sum(axis=0) / total
+    if average_rule is None or stratum.table is None or stratum.scaling is None:
+        raise ValueError("average_feeder needs the average_feeder rule and the strata of prepare")
+    row = average_feeder_row(stratum.table.iloc[members], stratum.scaling.specs, average_rule)
+    target = stratum.scaling.scale(feature_values(row, stratum.scaling.specs)).to_numpy(dtype="float64")[0]
+    if np.isnan(target).any():
+        raise ValueError(f"the average feeder of a group of {stratum.name} has an empty feature")
+    return target
 
 
 def weighted_sum_of_squares(points: np.ndarray, weights: np.ndarray) -> float:
@@ -167,19 +271,29 @@ def weighted_sum_of_squares(points: np.ndarray, weights: np.ndarray) -> float:
 
 
 def prepare(
-    features: pd.DataFrame, groups_rule: dict, eligible_rule: str, keep: set[str] | None = None
+    features: pd.DataFrame,
+    groups_rule: dict,
+    eligible_rule: str,
+    keep: set[str] | None = None,
+    extra_features: list[str] | None = None,
 ) -> tuple[list[Stratum], pd.DataFrame, dict]:
     """Strata in name order, the feature rows in grouping and the counts.
 
     Scaling runs over every row of ``features`` (the frame); ``keep``, when
-    given, then limits the strata to those feeders.
+    given, then limits the strata to those feeders. ``extra_features`` are
+    appended to ``groups.features`` for this run. Each stratum keeps its
+    feature rows and the frame's means and standard deviations, for the
+    average feeder.
     """
     if groups_rule["scaling"] != "frame_z":
         raise ValueError(f"unknown scaling {groups_rule['scaling']!r}")
     if eligible_rule not in ELIGIBLE_RULES:
         raise ValueError(f"eligible must be one of {ELIGIBLE_RULES}, not {eligible_rule!r}")
     features = features.sort_values("feeder", kind="stable").reset_index(drop=True)
-    scaled = frame_z(feature_values(features, groups_rule["features"]))
+    specs = list(groups_rule["features"]) + list(extra_features or [])
+    raw = feature_values(features, specs)
+    scaled = frame_z(raw)
+    scaling = Scaling(specs=specs, mean=raw.mean(), std=raw.std(ddof=0))
     complete = scaled.notna().all(axis=1)
     chosen = features["feeder"].isin(keep) if keep is not None else pd.Series(True, index=features.index)
     inside_all = complete & chosen
@@ -201,6 +315,8 @@ def prepare(
                 customers=part["customers"].to_numpy(dtype="float64"),
                 runnable=runnable,
                 eligible=eligible,
+                table=part.reset_index(drop=True),
+                scaling=scaling,
             )
         )
     in_grouping = features[inside_all].reset_index(drop=True)
@@ -232,15 +348,21 @@ class Group:
     row: dict
 
 
-def sequence(strata: list[Stratum], rule: str, cap: int) -> dict:
+def sequence(
+    strata: list[Stratum], rule: str, cap: int, choice: str = DEFAULT_CHOICE, average_rule: dict | None = None
+) -> dict:
     """Steps, group rows and feeder labels of one order rule (module note, steps 3 to 6).
 
-    Gives ``steps`` (one dict per step), ``rows`` (one dict per step and
+    ``choice`` sets the target point a new group's representative is nearest
+    to (``target_point``); ``average_rule`` is ``representatives_scout.average_feeder``,
+    used by ``average_feeder`` only. Gives ``steps`` (one dict per step), ``rows`` (one dict per step and
     group), ``labels`` (per step, the group of every feeder in grouping, strata
     in order) and ``names`` and ``strata`` of those feeders.
     """
     if rule not in ORDER_RULES:
         raise ValueError(f"unknown order rule {rule!r}")
+    if choice not in REPRESENTATIVE_CHOICES:
+        raise ValueError(f"representative_choice must be one of {REPRESENTATIVE_CHOICES}, not {choice!r}")
     measure = "weighted_spread" if rule == "load_weighted_drop" else "spread"
     total_load = float(sum(stratum.load_kw.sum() for stratum in strata))
     cache: dict[tuple[int, int], dict] = {}
@@ -269,7 +391,7 @@ def sequence(strata: list[Stratum], rule: str, cap: int) -> dict:
         info = node_info(s, node)
         members, spread, weighted_spread = info["members"], info["spread"], info["weighted_spread"]
         points = stratum.points[members]
-        centre = points.mean(axis=0)
+        centre = target_point(stratum, members, choice, average_rule)
         member_names = [stratum.names[position] for position in members]
         eligible = stratum.eligible[members]
         near_name, near_distance = nearest(points, centre, member_names, eligible)
@@ -469,11 +591,32 @@ def pin_table(table: pd.DataFrame, report_steps: list[int]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["rule", "n", "representatives", "not_runnable_at_pin", "not_runnable_load_share"])
 
 
-def build(features: pd.DataFrame, groups_rule: dict, block: dict, area: str) -> dict:
+def build(
+    features: pd.DataFrame,
+    groups_rule: dict,
+    block: dict,
+    area: str,
+    choice: str = DEFAULT_CHOICE,
+    average_rule: dict | None = None,
+    extra_features: list[str] | None = None,
+) -> dict:
     """Every table of steps 3 to 7 of the module note, and the strata and sequences for the gates."""
     check_settings(block)
-    strata, in_grouping, counts = prepare(features, groups_rule, block["eligible"])
-    sequences = {rule: sequence(strata, rule, int(block["max_representatives"])) for rule in block["order_rules"]}
+    prepared = prepare(features, groups_rule, block["eligible"], extra_features=extra_features)
+    return build_prepared(prepared, block, area, choice, average_rule)
+
+
+def build_prepared(
+    prepared: tuple[list[Stratum], pd.DataFrame, dict],
+    block: dict,
+    area: str,
+    choice: str = DEFAULT_CHOICE,
+    average_rule: dict | None = None,
+) -> dict:
+    """``build`` on the strata, rows and counts of one ``prepare``."""
+    strata, in_grouping, counts = prepared
+    cap = int(block["max_representatives"])
+    sequences = {rule: sequence(strata, rule, cap, choice, average_rule) for rule in block["order_rules"]}
     table = pd.concat([group_table(result["rows"]) for result in sequences.values()], ignore_index=True)
     steps = pd.concat([step_table(result["steps"]) for result in sequences.values()], ignore_index=True)
     labels = pd.concat([label_table(rule, result) for rule, result in sequences.items()], ignore_index=True)
@@ -570,19 +713,30 @@ def curve_errors(estimate: np.ndarray, true: np.ndarray) -> dict[str, float]:
     }
 
 
-def head_start(features: pd.DataFrame, curves: pd.DataFrame, groups_rule: dict, block: dict) -> dict:
-    """Sizing, summary and the method on the feeders with curves alone (module note, step 8)."""
-    names, matrix, hours = curve_matrix(curves)
-    sizing = head_start_sizing(features, names, matrix, hours)
-    strata, in_grouping, counts = prepare(features, groups_rule, block["eligible"], keep=set(names))
-    result = sequence(strata, HEAD_START_RULE, int(counts["in_grouping"]))
+def method_on_curves(
+    features: pd.DataFrame,
+    names: list[str],
+    matrix: np.ndarray,
+    groups_rule: dict,
+    block: dict,
+    rule: str = HEAD_START_RULE,
+    weights: list[str] | None = None,
+    choice: str = DEFAULT_CHOICE,
+    average_rule: dict | None = None,
+    extra_features: list[str] | None = None,
+) -> dict:
+    """The method on the feeders with curves alone and its curve errors per weight and step (module note, step 8)."""
+    strata, in_grouping, counts = prepare(
+        features, groups_rule, block["eligible"], keep=set(names), extra_features=extra_features
+    )
+    result = sequence(strata, rule, int(counts["in_grouping"]), choice, average_rule)
     table = group_table(result["rows"])
     position = {name: row for row, name in enumerate(names)}
     kept = [position[name] for name in in_grouping["feeder"]]
     true = matrix[kept].sum(axis=0)
     own = in_grouping.set_index("feeder")
     rows = []
-    for weight in block["head_start_weights"]:
+    for weight in block["head_start_weights"] if weights is None else weights:
         for n, part in table.groupby("n", sort=True):
             group_size = part["load_kw"] if weight == "load_kw" else part["customers"].astype("float64")
             representative_size = own.loc[part["representative"], weight].to_numpy(dtype="float64")
@@ -591,13 +745,21 @@ def head_start(features: pd.DataFrame, curves: pd.DataFrame, groups_rule: dict, 
             rows.append({"weight": weight, "n": int(n), **curve_errors(estimate, true)})
     errors_table = pd.DataFrame(rows)
     errors_table["note"] = HEAD_START_NOTE
+    return {"errors": errors_table, "counts": counts, "steps": step_table(result["steps"])}
+
+
+def head_start(features: pd.DataFrame, curves: pd.DataFrame, groups_rule: dict, block: dict) -> dict:
+    """Sizing, summary and the method on the feeders with curves alone (module note, step 8)."""
+    names, matrix, hours = curve_matrix(curves)
+    sizing = head_start_sizing(features, names, matrix, hours)
+    method = method_on_curves(features, names, matrix, groups_rule, block)
     return {
         "feeders": sizing,
         "summary": head_start_summary(sizing),
-        "errors": errors_table,
-        "counts": counts,
+        "errors": method["errors"],
+        "counts": method["counts"],
         "hours": hours,
-        "steps": step_table(result["steps"]),
+        "steps": method["steps"],
     }
 
 
@@ -666,6 +828,17 @@ def head_start_gate(errors_table: pd.DataFrame, feeders: int, tolerance: float) 
     return bool(len(last)) and bool((last[columns].abs() <= tolerance).all().all())
 
 
+def assumption_table(settings: dict, blocks: tuple[str, ...], suffix: str) -> pd.DataFrame:
+    """``block``, ``key``, ``sentence`` of every key of the blocks that ends in the note suffix, word for word."""
+    rows = [
+        {"block": block, "key": key, "sentence": value}
+        for block in blocks
+        for key, value in settings[block].items()
+        if str(key).endswith(suffix)
+    ]
+    return pd.DataFrame(rows, columns=ASSUMPTION_COLUMNS)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--stamp", required=True, help="UTC stamp of the output names")
@@ -679,7 +852,7 @@ def main(argv: list[str] | None = None) -> int:
     block, groups_rule = settings["representatives"], settings["groups"]
     check_settings(block)
     runtime = load_runtime()
-    suffix = runtime["names"]["note_suffix"]
+    suffix, texts_key = runtime["names"]["note_suffix"], runtime["names"]["texts_key"]
     pd.set_option("display.width", runtime["print_width"])
     out = Paths(load_local(), settings).output
     print(f"scipy {scipy.__version__}")
@@ -687,13 +860,16 @@ def main(argv: list[str] | None = None) -> int:
         if str(key).endswith(suffix):
             print(f"{key}: {value}")
     features = pd.read_parquet(out / f"features_{args.features_stamp}.parquet")
-    built = build(features, groups_rule, block, settings["area"])
+    average_rule = settings["representatives_scout"]["average_feeder"]
+    built = build(features, groups_rule, block, settings["area"], block["representative_choice"], average_rule)
 
     write_csv(built["steps"], out / f"representatives_steps_{args.stamp}.csv")
     write_parquet(built["representatives"], out / f"representatives_{args.stamp}.parquet")
     write_parquet(built["groups"], out / f"representatives_groups_{args.stamp}.parquet")
     write_csv(built["errors"], out / f"representatives_errors_{args.stamp}.csv")
     write_csv(built["pin"], out / f"representatives_pin_{args.stamp}.csv")
+    assumptions = assumption_table(settings, ASSUMPTION_BLOCKS, suffix)
+    write_csv(assumptions, out / f"representatives_{texts_key}_{args.stamp}.csv")
     for name, value in built["counts"].items():
         print(f"{name}: {value}")
     for rule, part in built["steps"].groupby("rule", sort=False):
