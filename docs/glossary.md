@@ -30,6 +30,9 @@ Placeholder
 Regulator
 : A transformer of a substation folder's `Transformers.dss` whose windings all carry the same kV; it adds nothing to the substation's rating ([assembly.md](assembly.md)).
 
+Representative
+: The one real feeder that stands for a group in the method of decision K76: the eligible feeder nearest the group's centre when the group was formed, kept through later splits by the child that holds it. Representatives are added one at a time and never dropped ([representatives.md](representatives.md)).
+
 Run feeder
 : The feeder run through the coupling for a group: its typical feeder, or its placeholder when it has none. Several groups can share one run feeder ([runs.md](runs.md)).
 
@@ -47,6 +50,9 @@ Unit
 
 Typical feeder
 : The feeder of a group nearest the group's centre among those the coupling can run alone ([groups.md](groups.md)).
+
+Weight
+: In the method of decision K76, the group's load kW over its representative's load kW; the representative's whole curve and power-flow results are multiplied by it as one piece ([representatives.md](representatives.md)). It is not the starting weight of a group in [groups.md](groups.md), which is a share of the stratum's customers (decision K60).
 
 Workspace
 : The folder `data_root` of `config/local.yaml`, outside the repository. It holds the downloads and every generated file; it holds tens of GB and is never committed ([file-map.md](file-map.md)).

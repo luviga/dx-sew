@@ -533,3 +533,43 @@ assembly:
   # (config/sources.yaml, cb_2018_48_tract_500k). Read with the state code of
   # geography.counties.
   tracts_url: "https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_48_tract_500k.zip"
+
+representatives:
+  # Order in which representatives are added, the representative and weight
+  # of every group at every step, and the checks that need no building run
+  # (decision K76). Method note: docs/representatives.md. The scaled features
+  # and the tree of each stratum are those of the block groups.
+  # Rules that choose the next group to split: ward_drop (fall of the
+  # within-group sum of squares on the scaled features) and load_weighted_drop
+  # (the same with each feeder weighted by its load_kw).
+  order_rules: ["ward_drop", "load_weighted_drop"]
+  # Feeders that can be a representative: all (every feeder in grouping) or
+  # runnable_alone. A feeder whose load_kw is 0 never is.
+  eligible: "all"
+  eligible_assumption: "ASSUMPTION: the coupling at its v1.0.0 tag runs every frame feeder alone, so any feeder can be a representative; the column runnable_at_pin marks those the pinned commit cannot run."
+  # Weight of a group: its load_kw over its representative's load_kw
+  # (decision K76).
+  weight: "load_kw_share"
+  # Largest number of representatives of the order.
+  max_representatives: 300
+  max_representatives_assumption: "ASSUMPTION: 300 representatives are more than one machine can run in the time of the study, so the order is written far enough to see where more runs stop paying."
+  # Columns of the feature table whose sum over the feeders in grouping the
+  # weighted representatives are checked against.
+  check_quantities: ["customers", "res_customers", "com_customers", "loads", "line_km", "service_transformers", "service_kva", "regulators"]
+  check_quantities_assumption: "ASSUMPTION: these are the columns of the feature table that add up over feeders and that the weighted representatives should reproduce."
+  # Head start: the stamp of the year curves of the run feeders
+  # (curves_<stamp>/feeder_curves.parquet of dxsew.curves.year), and the
+  # weights compared on them (load_kw or customers of the group over those of
+  # its representative). Null skips the head start.
+  head_start_curves_stamp: "20261118T212825Z"
+  head_start_weights: ["load_kw", "customers"]
+  # Numbers of representatives at which the pin table is written.
+  report_steps: [25, 50, 86, 100, 200, 300]
+  report_steps_assumption: "ASSUMPTION: these numbers of representatives span the runs that can be afforded."
+  # Tolerances of the gates (rounding only): the weights times the
+  # representatives' load_kw add to the stratum's load_kw within
+  # gate_weight_tolerance (relative); explained never falls by more than
+  # gate_zero_tolerance from one step to the next, and every error of the head
+  # start is 0 within gate_zero_tolerance when every feeder is its own group.
+  gate_weight_tolerance: 1.0e-9
+  gate_zero_tolerance: 1.0e-12

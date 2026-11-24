@@ -12,7 +12,7 @@ These rules hold for every change to dx-sew, by a person or by an agent.
 
 ## Layout
 
-- `dxsew/` is region-neutral; no folder or module name holds a region. Readers of public data are in `dxsew/sources/`, the frame and groups in `dxsew/frame/`, curves in `dxsew/curves/`, the fit in `dxsew/fit/`, staging and the coupling in `dxsew/runs/`.
+- `dxsew/` is region-neutral; no folder or module name holds a region. Readers of public data are in `dxsew/sources/`, the frame and groups in `dxsew/frame/`, curves in `dxsew/curves/`, the fit in `dxsew/fit/`, staging and the coupling in `dxsew/runs/`, the substation assembly in `dxsew/assembly/`.
 - One setup per balancing area and year in `config/setups/`, named in `config/setups/registry.json`. Shared settings in `config/areas.yaml`, `config/units.yaml`, `config/runtime.yaml`, `config/scan.yaml`. Small sourced tables in `inputs/`.
 - Generated files go to the workspace (`data_root` of `config/local.yaml`), never into the repository. [docs/file-map.md](docs/file-map.md) lists every file and what writes and reads it; [docs/configuration.md](docs/configuration.md) every key.
 
