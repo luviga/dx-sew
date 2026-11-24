@@ -550,6 +550,13 @@ representatives:
   # Weight of a group: its load_kw over its representative's load_kw
   # (decision K76).
   weight: "load_kw_share"
+  # Rule that picks a new group's representative (decision K77): the eligible
+  # feeder nearest a target point of the group, the group's centre (centre),
+  # its load-weighted centre (load_weighted_centre) or its average feeder
+  # (average_feeder, built as representatives_scout.average_feeder says).
+  # The default keeps the choice of decision K76; changing it is a later
+  # decision.
+  representative_choice: "centre"
   # Largest number of representatives of the order.
   max_representatives: 300
   max_representatives_assumption: "ASSUMPTION: 300 representatives are more than one machine can run in the time of the study, so the order is written far enough to see where more runs stop paying."
@@ -573,3 +580,34 @@ representatives:
   # start is 0 within gate_zero_tolerance when every feeder is its own group.
   gate_weight_tolerance: 1.0e-9
   gate_zero_tolerance: 1.0e-12
+
+representatives_scout:
+  # Scout of the representative choice, the order rule and a regulator
+  # feature (decision K77): one sequence for every combination of
+  # representatives.order_rules, choices and feature_sets, on the checks of
+  # dxsew.frame.representatives and its head start. It measures only; the
+  # block representatives keeps the defaults. Method note:
+  # docs/representatives.md.
+  # Representative choices compared (representatives.representative_choice).
+  choices: ["centre", "load_weighted_centre", "average_feeder"]
+  # Feature sets compared: a name and the features added to groups.features
+  # for that set (log(x) is the natural log of x plus 1).
+  feature_sets:
+    nine: []
+    with_regulators: ["log(regulators)"]
+  feature_sets_assumption: "ASSUMPTION: the number of regulators read from a feeder's circuit files, logged as the other counts are, marks feeders with voltage support; it is tried as a tenth feature to see whether groups that separate feeders with and without regulators reproduce the frame's regulators better."
+  # How a group's average feeder is built from the feature table, one entry
+  # per column a feature reads: mean (sum over the members over their
+  # number), ratio [a, b] (sum of a over sum of b) and weighted_mean (sum of
+  # the value times the weight column over the sum of the weight column).
+  average_feeder:
+    mean: ["customers", "load_kw", "line_km", "extent_km", "service_transformers", "regulators", "primary_kv"]
+    ratio:
+      kw_per_customer: ["load_kw", "customers"]
+      kva_per_kw: ["service_kva", "load_kw"]
+    weighted_mean:
+      com_kw_share: "load_kw"
+  average_feeder_assumption: "ASSUMPTION: a group's average feeder has, for each count, the group's total over its number of feeders; for each ratio, the group's ratio of totals; for the commercial kW share, the group's commercial kW over its kW; and for the primary voltage, the group's mean. Its copies, weighted by load kW, reproduce the group's totals."
+  # Weight of the head start of the scout: the group's load_kw over its
+  # representative's (one of representatives.head_start_weights).
+  head_start_weight: "load_kw"
