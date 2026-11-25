@@ -748,11 +748,21 @@ def method_on_curves(
     return {"errors": errors_table, "counts": counts, "steps": step_table(result["steps"])}
 
 
-def head_start(features: pd.DataFrame, curves: pd.DataFrame, groups_rule: dict, block: dict) -> dict:
-    """Sizing, summary and the method on the feeders with curves alone (module note, step 8)."""
+def head_start(
+    features: pd.DataFrame, curves: pd.DataFrame, groups_rule: dict, block: dict, average_rule: dict | None = None
+) -> dict:
+    """Sizing, summary and the method on curves under ``representatives.representative_choice`` (module note, step 8)."""
     names, matrix, hours = curve_matrix(curves)
     sizing = head_start_sizing(features, names, matrix, hours)
-    method = method_on_curves(features, names, matrix, groups_rule, block)
+    method = method_on_curves(
+        features,
+        names,
+        matrix,
+        groups_rule,
+        block,
+        choice=block.get("representative_choice", DEFAULT_CHOICE),
+        average_rule=average_rule,
+    )
     return {
         "feeders": sizing,
         "summary": head_start_summary(sizing),
@@ -879,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if block["head_start_curves_stamp"] is not None:
         curves_path = out / f"curves_{block['head_start_curves_stamp']}" / "feeder_curves.parquet"
-        started_head = head_start(features, pd.read_parquet(curves_path), groups_rule, block)
+        started_head = head_start(features, pd.read_parquet(curves_path), groups_rule, block, average_rule=average_rule)
         write_csv(started_head["feeders"], out / f"head_start_feeders_{args.stamp}.csv")
         write_csv(started_head["summary"], out / f"head_start_summary_{args.stamp}.csv")
         write_csv(started_head["errors"], out / f"head_start_errors_{args.stamp}.csv")

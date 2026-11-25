@@ -209,6 +209,24 @@ def test_head_start_is_exact_with_every_feeder():
     assert set(summary["statistic"]) == {"median", "q1", "q3", "cv", "spearman"}
 
 
+def test_head_start_follows_the_representative_choice():
+    features = table()
+    names = sorted(features["feeder"])[:10]
+    stamps = pd.date_range("2018-01-01 00:15", periods=8, freq="15min")
+    rng = np.random.default_rng(1)
+    curves = pd.DataFrame(
+        [{"feeder": name, "timestamp": stamp, "kw": float(rng.uniform(1, 100))} for name in names for stamp in stamps]
+    )
+    curve_names, matrix, _ = rep.curve_matrix(curves)
+    weighted = rep.method_on_curves(features, curve_names, matrix, GROUPS_RULE, BLOCK, choice="load_weighted_centre")
+    centre = rep.method_on_curves(features, curve_names, matrix, GROUPS_RULE, BLOCK, choice="centre")
+    chosen = rep.head_start(features, curves, GROUPS_RULE, {**BLOCK, "representative_choice": "load_weighted_centre"})
+    default = rep.head_start(features, curves, GROUPS_RULE, BLOCK)
+    pd.testing.assert_frame_equal(chosen["errors"], weighted["errors"], check_exact=True)
+    pd.testing.assert_frame_equal(default["errors"], centre["errors"], check_exact=True)
+    assert not weighted["errors"].equals(centre["errors"])
+
+
 def test_curve_errors():
     true = np.array([1.0, 2.0, 4.0, 1.0])
     found = rep.curve_errors(true * 1.1, true)
