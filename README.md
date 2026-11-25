@@ -37,6 +37,8 @@ Every feeder of the ERCOT frame is described by features read from its circuit t
 | Features and groups | `uv run python -m dxsew.frame.features`, `uv run python -m dxsew.frame.groups` | [groups.md](docs/groups.md) |
 | Representatives and their weights | `uv run python -m dxsew.frame.representatives --stamp <stamp> --features-stamp <stamp>` | [representatives.md](docs/representatives.md) |
 | Scout of the representative choice | `uv run python -m dxsew.frame.representatives_scout --stamp <stamp> --features-stamp <stamp> --reference-stamp <stamp>` | [representatives.md](docs/representatives.md) |
+| Sample order and match list | `uv run python -m dxsew.frame.sample_order --stamp <stamp> --features-stamp <stamp> --representatives-stamp <stamp>` | [error_curve.md](docs/error_curve.md) |
+| Error curve and stop rule | `uv run python -m dxsew.frame.error_curve --stamp <stamp> --features-stamp <stamp> --representatives-stamp <stamp> --curves <feeder_curves.parquet> --sample <csv>` | [error_curve.md](docs/error_curve.md) |
 | Substation ratings and assembly | `uv run python -m dxsew.assembly.substations ratings`, `uv run python -m dxsew.assembly.substations assemble` | [assembly.md](docs/assembly.md) |
 | Run feeders | `uv run python -m dxsew.runs.cases` | [runs.md](docs/runs.md) |
 | One coupling case | `uv run python -m dxsew.runs.coupling` | [coupling.md](docs/coupling.md) |

@@ -2,7 +2,7 @@
 
 On 22 November 2026 the maintainer decided the method of dx-sew (decision K76). Feeders are grouped by a nested tree on the nine features read from circuit files ([groups.md](groups.md)). Each group has one real feeder as its representative. A representative stands for its group with one weight, the group's load kW over its own load kW, and its whole curve and its power-flow results are later multiplied by that weight as one piece. Representatives are added one at a time and earlier ones are kept. No curve per customer is used anywhere.
 
-`dxsew.frame.representatives` builds the first part, which needs no coupling run: the order in which representatives are added, the representative and weight of every group at every step, and three checks that need no new building run. Later jobs put EULP buildings on the representatives and on a random sample of feeders and read the error of the method there. This module does not draw that sample and does not choose how many representatives are run.
+`dxsew.frame.representatives` builds the first part, which needs no coupling run: the order in which representatives are added, the representative and weight of every group at every step, and three checks that need no new building run. Later jobs put EULP buildings on the representatives and on a random sample of feeders and read the error of the method there. This module does not draw that sample and does not choose how many representatives are run; [error_curve.md](error_curve.md) does (decision K80).
 
 The customer weights, the dial and the assembly of decision K60 ([groups.md](groups.md), [assembly.md](assembly.md)) are unchanged and stay until a later job.
 
@@ -24,7 +24,7 @@ The scaled features and the Ward tree of each stratum are exactly those of `dxse
 
 For each rule of `representatives.order_rules` the module builds one sequence of steps for the whole balancing area.
 
-1. The first step has one group per stratum, so it has as many representatives as there are strata. The representative of a group is the eligible feeder nearest the group's target point (`groups.nearest`; ties go to the first feeder in name order). Under the default `representative_choice: centre` the target point is the group's centre, the unweighted mean of the scaled features; the other choices are below.
+1. The first step has one group per stratum, so it has as many representatives as there are strata. The representative of a group is the eligible feeder nearest the group's target point (`groups.nearest`; ties go to the first feeder in name order). Under `representative_choice: centre` the target point is the group's centre, the unweighted mean of the scaled features; the other choices, and the choice of record, `load_weighted_centre` (decision K78), are below.
 2. At each next step one group is split into the two children its tree node has. Among all groups of all strata that can still be split, the one with the largest drop is split:
    - `ward_drop`: the within-group sum of squares of the parent minus those of its two children, on the scaled features (`groups._sum_of_squares`).
    - `load_weighted_drop`: the same with each feeder weighted by its `load_kw`, each sum taken around the load-weighted centre of its group.
@@ -39,11 +39,13 @@ Under `ward_drop` the drop of a node is the increase of the within-group sum of 
 
 On 23 November 2026 the maintainer decided to scout three ways of choosing a group's representative before choosing one (decision K77). The setting `representatives.representative_choice` names the rule. Each rule sets a target point on the scaled features of the run, and the representative is the eligible feeder nearest that point (`groups.nearest`, ties to the first name). Everything else of the order stays as above: the groups, the order of the splits and the rule that a kept representative stays.
 
-- `centre` (the default, the rule of decision K76): the unweighted mean of the members' scaled points.
-- `load_weighted_centre`: the mean of the members' scaled points weighted by `load_kw`. When the members' `load_kw` add to 0 it is the unweighted mean.
+- `centre` (the rule of decision K76, and the code's default when the setting is absent): the unweighted mean of the members' scaled points.
+- `load_weighted_centre` (the choice of record, decision K78): the mean of the members' scaled points weighted by `load_kw`. When the members' `load_kw` add to 0 it is the unweighted mean.
 - `average_feeder`: one raw row is built from the members' values in the feature table, as `representatives_scout.average_feeder` says: for a column under `mean`, the sum over the members over their number; for a column under `ratio` `[a, b]`, the sum of `a` over the sum of `b`; for a column under `weighted_mean` `w`, the sum of the value times `w` over the sum of `w`. Columns that no feature of the run reads are not used. The row is turned into features with `groups.feature_values` and the run's feature specs, and scaled with the per-column mean and standard deviation that `frame_z` used over the frame (kept from `prepare`, not computed again on the group).
 
 A group of one feeder has that feeder's own point as its target under all three choices. The columns `distance`, `nearest_feeder` and `nearest_distance` of the group rows refer to the target point. The choice moves representatives and never changes a partition: within one order rule and one feature set, the groups at every step are the same under the three choices. Under `centre` every output of `dxsew.frame.representatives` is the same as before decision K77.
+
+On 24 November 2026 the maintainer chose `load_weighted_centre` as the choice of record (decision K78), after the scout below, with the order rule `ward_drop` and the nine features of decision K60; the setup's `representative_choice` is now `load_weighted_centre`. Earlier representatives are kept as before.
 
 ## The scout command
 
@@ -83,7 +85,7 @@ The pin table counts, for each rule and each number of `report_steps` that the s
 The run feeders of the typical-feeder table ([runs.md](runs.md)) have EULP year curves (`head_start_curves_stamp`). They were chosen as group centres, so they are not a random sample; the head start is a first look and says so in a `note` column of each of its files.
 
 - Sizing. For each of them: yearly EULP energy in kWh (the sum of `kw` times the hours of one step, the step taken from the timestamps), EULP peak kW, and from the feature table `load_kw`, `customers` and `stratum`, with four ratios: energy over `load_kw`, energy over `customers`, peak over `load_kw`, peak over `customers`. For all of them and per stratum: the count, and for each ratio its median, quartiles (pandas `describe`) and coefficient of variation (standard deviation, population, over the mean); and the Spearman rank correlation (`scipy.stats.spearmanr`) of EULP energy with `load_kw` and with `customers`, and of EULP peak with each.
-- The method on these feeders alone. They are treated as if they were every feeder. Their features are scaled with the frame's mean and standard deviation (not their own), a Ward tree is built per stratum on them, and the order above runs with rule `ward_drop` and no cap other than their number. At every step, for each weight of `head_start_weights`, the estimate curve is the sum over groups of weight times the representative's curve, where the weight is the group's `load_kw` over the representative's (`load_kw`) or the group's customers over the representative's (`customers`). It is compared with the sum of their curves: CV(RMSE) over the year (root mean square error over the mean of the true sum), the error at the true sum's peak step, the error of the estimate's own peak, and the error in yearly energy. When every feeder is its own group every error is 0; the run checks it within `gate_zero_tolerance`.
+- The method on these feeders alone. They are treated as if they were every feeder. Their features are scaled with the frame's mean and standard deviation (not their own), a Ward tree is built per stratum on them, and the order above runs with rule `ward_drop`, the setup's `representative_choice` and no cap other than their number. At every step, for each weight of `head_start_weights`, the estimate curve is the sum over groups of weight times the representative's curve, where the weight is the group's `load_kw` over the representative's (`load_kw`) or the group's customers over the representative's (`customers`). It is compared with the sum of their curves: CV(RMSE) over the year (root mean square error over the mean of the true sum), the error at the true sum's peak step, the error of the estimate's own peak, and the error in yearly energy. When every feeder is its own group every error is 0; the run checks it within `gate_zero_tolerance`.
 
 ## Gates
 
@@ -105,7 +107,7 @@ All in the block `representatives` of `config/setups/ercot_2018.yaml`.
 | `order_rules` | `ward_drop`, `load_weighted_drop` | the two rules of the order above |
 | `eligible` | `all` | ASSUMPTION: the coupling at its v1.0.0 tag runs every frame feeder alone, so any feeder can be a representative; the column runnable_at_pin marks those the pinned commit cannot run. Values: `all` (every feeder in grouping) or `runnable_alone` |
 | `weight` | `load_kw_share` | decision K76 |
-| `representative_choice` | `centre` | the rule of decision K76; `load_weighted_centre` and `average_feeder` are the other values (decision K77); changing it is a later decision |
+| `representative_choice` | `load_weighted_centre` | the choice of record (decision K78); `centre` (the rule of decision K76) and `average_feeder` are the other values (decision K77) |
 | `max_representatives` | 300 | ASSUMPTION: 300 representatives are more than one machine can run in the time of the study, so the order is written far enough to see where more runs stop paying. |
 | `check_quantities` | `customers`, `res_customers`, `com_customers`, `loads`, `line_km`, `service_transformers`, `service_kva`, `regulators` | ASSUMPTION: these are the columns of the feature table that add up over feeders and that the weighted representatives should reproduce. |
 | `head_start_curves_stamp` | `20261118T212825Z` | the year curves of the run feeders; null skips the head start |

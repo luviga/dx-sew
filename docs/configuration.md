@@ -210,7 +210,7 @@ The order of the representatives, their groups and their weights by load kW (dec
 | `order_rules` | Rules that choose the next group to split: `ward_drop` and `load_weighted_drop` |
 | `eligible` | Feeders that can be a representative: `all` (every feeder in grouping) or `runnable_alone`; a feeder whose `load_kw` is 0 never is. With its ASSUMPTION sentence |
 | `weight` | Weight of a group: `load_kw_share`, its `load_kw` over its representative's (decision K76) |
-| `representative_choice` | Rule that picks a new group's representative, the eligible feeder nearest the group's target point: `centre` (the default, the rule of decision K76), `load_weighted_centre` or `average_feeder` (decision K77) |
+| `representative_choice` | Rule that picks a new group's representative, the eligible feeder nearest the group's target point: `centre` (the rule of decision K76, and the code's default when the key is absent), `load_weighted_centre` (the choice of record, decision K78) or `average_feeder` (decision K77) |
 | `max_representatives` | Largest number of representatives of the order, with its ASSUMPTION sentence |
 | `check_quantities` | Columns of the feature table whose sums the weighted representatives are checked against, with its ASSUMPTION sentence |
 | `head_start_curves_stamp` | Stamp of the year curves of the run feeders used by the head start; null skips it |
@@ -228,6 +228,21 @@ The scout of the representative choice, the order rule and a regulator feature (
 | `feature_sets` | Map from a feature set's name to the features added to `groups.features` for its sequences (an empty list adds none), with its ASSUMPTION sentence |
 | `average_feeder` | How a group's average feeder is built from the feature table, one entry per column a feature reads: `mean` (list of columns), `ratio` (column: `[numerator, denominator]`) and `weighted_mean` (column: weight column), with its ASSUMPTION sentence |
 | `head_start_weight` | Weight of the scout's head start, one of `representatives.head_start_weights` |
+
+### `error_curve`
+
+The sample order, the match list, the error curve of the weighted representatives on the sample, its bootstrap band and the stop rule (decision K80), commands `dxsew.frame.sample_order` and `dxsew.frame.error_curve`; method note [error_curve.md](error_curve.md). The number of candidate representatives is `representatives.max_representatives`.
+
+| Key | Meaning |
+|---|---|
+| `order_rule` | Order rule whose groups and representatives are scored, one of `representatives.order_rules` |
+| `sample_per_stratum` | Sample feeders per stratum, the first of the stratum's sample order (all of them when it has fewer), with its ASSUMPTION sentence |
+| `sample_seed` | Seed of the sample order (plus the stratum's position in the sorted list of strata) and of the bootstrap, with its ASSUMPTION sentence |
+| `stop_gain` | Gain of the stop rule, a fraction (0.01 is one percentage point), with its ASSUMPTION sentence |
+| `power_flow_cap` | Largest number of representatives the stop rule looks at, with its ASSUMPTION sentence; `--cap` replaces it for one run |
+| `report_gains` | Other gains at which the stop point is also reported, with its ASSUMPTION sentence |
+| `bootstrap_draws` | Resamples of the sample feeders within each stratum, with its ASSUMPTION sentence |
+| `band` | Low and high fractions of the bootstrap band, with its ASSUMPTION sentence |
 
 ## `config/areas.yaml`
 
@@ -256,6 +271,7 @@ The scout of the representative choice, the order rule and a regulator feature (
 | `hash_block_bytes` | Block size when a SHA-256 is computed |
 | `workers.*` | Default thread and process counts of the commands |
 | `chunksize.*` | Tasks per worker call of the readers |
+| `bootstrap_block` | Bootstrap resamples held in memory at a time by `dxsew.frame.error_curve`; it changes no figure |
 | `relative_floor` | Floor of a denominator in relative differences |
 | `nearest_slack_degrees` | Slack when the nearest polygon is chosen |
 | `print_width`, `print_rows`, `detail_items`, `pin_status_lines`, `print_paths` | Console and table cell lengths |

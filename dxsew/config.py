@@ -73,6 +73,8 @@ SETUP_KEYS = {
                         "check_quantities", "head_start_curves_stamp", "head_start_weights", "report_steps",
                         "gate_weight_tolerance", "gate_zero_tolerance"},
     "representatives_scout": {"choices", "feature_sets", "average_feeder", "head_start_weight"},
+    "error_curve": {"order_rule", "sample_per_stratum", "sample_seed", "stop_gain", "power_flow_cap", "report_gains",
+                    "bootstrap_draws", "band"},
 }
 # Blocks that also hold the texts a run fills (runtime.yaml names.texts_key).
 BLOCKS_WITH_TEXTS = ("fit_target", "fit")
