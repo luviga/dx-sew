@@ -554,9 +554,8 @@ representatives:
   # feeder nearest a target point of the group, the group's centre (centre),
   # its load-weighted centre (load_weighted_centre) or its average feeder
   # (average_feeder, built as representatives_scout.average_feeder says).
-  # The default keeps the choice of decision K76; changing it is a later
-  # decision.
-  representative_choice: "centre"
+  # The choice of record is the load-weighted centre (decision K78).
+  representative_choice: "load_weighted_centre"
   # Largest number of representatives of the order.
   max_representatives: 300
   max_representatives_assumption: "ASSUMPTION: 300 representatives are more than one machine can run in the time of the study, so the order is written far enough to see where more runs stop paying."
@@ -611,3 +610,38 @@ representatives_scout:
   # Weight of the head start of the scout: the group's load_kw over its
   # representative's (one of representatives.head_start_weights).
   head_start_weight: "load_kw"
+
+error_curve:
+  # Error curve of the weighted representatives on a random sample of feeders
+  # and the rule that reads from it how many representatives get power flow
+  # (decision K80). Method note: docs/error_curve.md. The number of candidate
+  # representatives is representatives.max_representatives.
+  # Order rule whose groups and representatives are scored (one of
+  # representatives.order_rules).
+  order_rule: "ward_drop"
+  # Sample feeders per stratum: the first of each stratum's seeded random
+  # order (all of them when a stratum has fewer).
+  sample_per_stratum: 50
+  sample_per_stratum_assumption: "ASSUMPTION: 50 feeders per stratum, drawn at random, measure the error of the weighted representatives well enough to read a gain of one percentage point; the bootstrap band of every run shows whether that holds."
+  # Seed of the sample order; a stratum's order is drawn with this seed plus
+  # the stratum's position in the sorted list of strata. The bootstrap is
+  # seeded from it too.
+  sample_seed: 20261124
+  sample_seed_assumption: "ASSUMPTION: any fixed seed serves; it is recorded so the same sample is drawn again, and the bootstrap band shows how much one draw matters."
+  # Stop rule: the smallest number of representatives after which no larger
+  # number up to power_flow_cap lowers the CV(RMSE) or the absolute peak
+  # error by more than stop_gain (a fraction, 0.01 is one percentage point).
+  stop_gain: 0.01
+  stop_gain_assumption: "ASSUMPTION: one more power-flow run is worth it while some larger number of representatives, up to the cap, still lowers the CV(RMSE) or the peak error by more than one percentage point."
+  power_flow_cap: 150
+  power_flow_cap_assumption: "ASSUMPTION: 150 representatives is the most power flow one machine can run for the study, about 26 to 33 hours per pass at four at once at the trial's measured rate."
+  # Other gains at which the stop point is also reported.
+  report_gains: [0.02, 0.01, 0.005]
+  report_gains_assumption: "ASSUMPTION: the stop point is also reported for half and twice the chosen gain, so a reader sees how much it depends on that setting."
+  # Bootstrap of the area figures: resamples of the sample feeders of each
+  # stratum, with replacement and the same count, and the percentiles of the
+  # band (fractions).
+  bootstrap_draws: 1000
+  bootstrap_draws_assumption: "ASSUMPTION: 1,000 resamples of the sample feeders within each stratum give a stable band."
+  band: [0.05, 0.95]
+  band_assumption: "ASSUMPTION: the band runs from the 5th to the 95th percentile of the resampled errors."

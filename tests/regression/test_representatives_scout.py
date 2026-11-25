@@ -191,7 +191,9 @@ def test_average_rule_must_cover_every_feature_column():
 def test_scout_settings_of_the_setup_are_known():
     setup = config.load_setup()
     scout.check_scout(setup["representatives_scout"], setup["representatives"], setup["groups"])
-    assert setup["representatives"]["representative_choice"] == rep.DEFAULT_CHOICE
+    # The choice of record is the load-weighted centre (decision K78); the code default stays that of K76.
+    assert setup["representatives"]["representative_choice"] == "load_weighted_centre"
+    assert rep.DEFAULT_CHOICE == "centre"
     with pytest.raises(ValueError):
         scout.check_scout({**setup["representatives_scout"], "choices": ["biggest"]}, setup["representatives"],
                           setup["groups"])

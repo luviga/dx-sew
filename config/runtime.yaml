@@ -34,6 +34,10 @@ workers:
   stage_threads: 16       # dxsew.runs.stage --workers, download threads
   cases_threads: 16       # dxsew.runs.cases --workers, default and largest
 
+# Bootstrap resamples held in memory at a time by dxsew.frame.error_curve
+# (each holds two year curves); it changes the memory a run takes, never its figures.
+bootstrap_block: 100
+
 # Tasks sent to a reader process at a time.
 chunksize:
   frame: 16               # substations per task of the frame reader
