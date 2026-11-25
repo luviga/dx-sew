@@ -9,6 +9,9 @@ Day B
 Average feeder
 : For a group, one made-up row of the feature table: for each count, the group's total over its number of feeders; for each ratio, the group's ratio of totals; for the commercial kW share, the group's commercial kW over its kW; for the primary voltage, the group's mean (setup key `representatives_scout.average_feeder`). Under the representative choice `average_feeder` the representative is the real feeder nearest it on the scaled features (decision K77) ([representatives.md](representatives.md)).
 
+Error curve
+: For each number of representatives, the error of the weighted representatives against the summed EULP curves of a random sample of feeders: CV(RMSE), peak and energy errors per stratum, their load-share average for the area, and a bootstrap band (decision K80) ([error_curve.md](error_curve.md)).
+
 Check set
 : Substations run whole through the coupling beside the run feeders (setup key `trial.check_set`), to set the group curves scaled by customers against a substation's own run (decision K73) ([assembly.md](assembly.md)).
 
@@ -20,6 +23,9 @@ Group
 
 Loading
 : A substation's peak kW over its rating in kVA, `loading_kw_over_kva_lower_bound`. It is a lower bound of the apparent loading, because the apparent power S is at least the active power P and no power factor is assumed ([assembly.md](assembly.md)).
+
+Match list
+: The feeders the coupling's matching phases must give EULP curves for the error curve: the candidate representatives in the order they are added, then the first sample feeders of each stratum's sample order (decision K80) ([error_curve.md](error_curve.md)).
 
 Pass
 : One run of every case of the trial under one peak-day rule of the coupling: the first under `per_circuit`, each mix on the feeder's own worst day; the second under `given`, every mix on day B ([trial.md](trial.md)).
@@ -42,11 +48,17 @@ Representative choice
 Run feeder
 : The feeder run through the coupling for a group: its typical feeder, or its placeholder when it has none. Several groups can share one run feeder ([runs.md](runs.md)).
 
+Sample order
+: For each stratum, its feeders in grouping put in a seeded random order; the sample of the error curve is the first feeders of it, so a larger sample only adds feeders (decision K80) ([error_curve.md](error_curve.md)).
+
 Setup
 : One balancing area and year, the file `config/setups/<setup>.yaml` named in `config/setups/registry.json`. It holds every value the code uses for that area, next to its source or its ASSUMPTION sentence ([configuration.md](configuration.md)).
 
 Split buses
 : A substation whose units feed two or more distinct low-side buses (column `split_buses`); its loading is also reported against its largest unit ([assembly.md](assembly.md)).
+
+Stop rule
+: The smallest number of representatives after which no larger number, up to the power-flow cap, lowers the area CV(RMSE) or the absolute peak error by more than the gain (decision K80) ([error_curve.md](error_curve.md)).
 
 Stratum
 : The kind of a sub-region (U or R, the last letter of its name) crossed with the Building America climate zone of the substation's county, written `<kind>|<zone>` ([texas_sample.md](texas_sample.md)).
