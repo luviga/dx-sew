@@ -186,7 +186,7 @@ Disk guard. Before each download the guard checks the two limits given on the co
 - `<data_root>/texas/coupling_settings_<stamp>/`, the folder that `run_case.py --settings` merges over the coupling's own files:
   - `local.yaml`: every key of the coupling `local.yaml` given with `--base-local`, each `--extra-key` read from `--extra-local` (for example `evwatts_extract_dir`, which the EV cars step reads), and `runs_root` set to the absolute folder of `--runs-root`.
   - `topology_registry.yaml`: one entry per substation with the keys `topology_state`, `geography` (the county), `urbanicity` (the sub-region), `feeder_id` and `circuit_folder` (the substation), `smart_ds_relpath` (`<staging.folder>/<sub-region>/base_timeseries/opendss`), `parquet_relpath` (`<staging.folder>/parquet_data`), `status: ready` and `description`.
-  - `pipeline_config.yaml`: `peak_day_rule: given`.
+  - `pipeline_config.yaml`: the setup's `runs.pipeline_override` (the residential release of decision K22 and `horizon_days`) with `peak_day_rule: given`.
   - `given_days.csv`: columns `Feeder`, `Season`, `Month`, `Day`, one row per feeder and season, the feeder named as its SMART-DS feeder folder. `--days` gives either this table or the columns `Season`, `Month` and `Day` alone, which then apply to every feeder.
 - `<data_root>/texas/cases_<stamp>/<case_id>.yaml`, one case per substation, with the donor of `coupling.donor_id` and `max_feeders` equal to the feeder count of the substation.
 

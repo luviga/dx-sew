@@ -2,5 +2,8 @@
 # dxsew.coupling.check_pin() stops when the coupling clone is at another commit
 # or has local changes. The pin moves only by a recorded decision, after a
 # reference substation is rerun at the old and the new pin (docs/coupling.md).
+# This pin, the coupling's tag v1.0.0, follows decision K53: the reference
+# substation P159U/p159uhs6_1247 ran at the old and the new pin with the same
+# settings folder.
 repository: https://github.com/DeltaE/dss-eulp-coupling
-commit: 154fa8d378b3e96a9799a01f3b719abf4235ad83
+commit: f7f117154d4580d506e5f227ad70c64dab723ffc

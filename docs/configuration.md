@@ -124,7 +124,7 @@ Each method key has its sentence beside it (`<key>_assumption`), and `extent_km_
 | `alone_folder` | Folder under `smart_ds_base` with one tree per run feeder |
 | `parallel` | Coupling processes at once for phase 5b, and for the phases after `serial_through_phase` in a batch ([trial.md](trial.md)) |
 | `serial_through_phase` | Last phase of the serial part of a batch: up to it every case runs one call at a time, case by case, because phase 5a is the only phase that downloads building files and writes each under its final name (problem log P7) |
-| `pipeline_override` | `pipeline_config.yaml` of the runs (the ResStock release of the weather year) |
+| `pipeline_override` | `pipeline_config.yaml` of the runs (the ResStock release of the weather year and the days simulated per circuit, `horizon_days`) |
 
 ### `curves`
 
