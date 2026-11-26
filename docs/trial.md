@@ -28,7 +28,7 @@ For each pass it writes `<data_root>/texas/coupling_settings_trial_<pass>_<stamp
 
 - `local.yaml`: every key of the coupling `local.yaml` given, with `runs_root` set to the pass's folder;
 - `topology_registry.yaml`: one entry per run feeder from `cases.registry_entry` on its alone tree, and one per check-set substation from `settings.registry_entry` on the staging chosen above;
-- `pipeline_config.yaml`: the setup's `runs.pipeline_override` (the residential release of decision K22) with the pass's `peak_day_rule`; nothing else;
+- `pipeline_config.yaml`: the setup's `runs.pipeline_override` (the residential release of decision K22 and `horizon_days`) with the pass's `peak_day_rule`; nothing else;
 - for a pass that names a `given_day`, `given_days.csv` (`Feeder, Season, Month, Day`, feeders named `<substation>--<feeder>`): the run feeders' rows of the given days file, and the same date in each season for every check-set feeder.
 
 and one case per run feeder and per check-set substation in `cases_trial_<pass>_<stamp>/`, then `trial_cases_<stamp>.csv` (pass, rule, case, kind, feeders, loads, stratum, timing, case file, settings folder, runs root). A dry run (`run_case.py --phase pre --dry-run`, pin checked before and after) of each pass's first case and of each check-set case is saved as `dry_run_trial_<pass>_<case>_<stamp>.txt`.
