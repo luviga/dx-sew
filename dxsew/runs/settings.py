@@ -13,7 +13,7 @@ repository's own (README, "Settings from a caller"):
 - ``local.yaml``: every key of the coupling ``local.yaml`` given, the extra keys
   taken from another file, and ``runs_root`` set to the absolute folder given;
 - ``topology_registry.yaml``: one entry per substation;
-- ``pipeline_config.yaml``: ``peak_day_rule: given``;
+- ``pipeline_config.yaml``: the setup's ``runs.pipeline_override`` with ``peak_day_rule: given``;
 - ``given_days.csv``: columns ``Feeder``, ``Season``, ``Month``, ``Day``, one row per
   feeder and season (README, "Peak-day rules").
 
@@ -26,6 +26,7 @@ and its parquet root ``<smart_ds_base>/<parquet_relpath>`` (``run_case.py``,
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import sys
 from pathlib import Path
@@ -155,7 +156,9 @@ def write_settings_folder(units: list[dict], settings: dict, folder: Path, local
         folder / "given_days.csv"]
     _dump(local, local_path)
     _dump(registry, registry_path)
-    _dump({"peak_day_rule": "given"}, pipeline_path)
+    pipeline = copy.deepcopy(settings["runs"]["pipeline_override"])
+    pipeline["peak_day_rule"] = "given"
+    _dump(pipeline, pipeline_path)
     with days_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(GIVEN_DAYS_COLUMNS)

@@ -321,6 +321,16 @@ runs:
   pipeline_override:
     eulp_release:
       residential: "resstock_amy2018_release_2"
+    # Days simulated per circuit and season (coupling README, "The multi-day
+    # window":
+    # https://github.com/DeltaE/dss-eulp-coupling/blob/f7f117154d4580d506e5f227ad70c64dab723ffc/README.md#L218-L237).
+    # ASSUMPTION: each circuit is simulated on its peak day alone, 96 steps of
+    # 15 minutes, the coupling's one-day run. Batteries and electric vehicles
+    # then carry no energy in from earlier days, so stress that builds over
+    # several days, such as a heat wave of about 4 days or the 13 days of
+    # Winter Storm Uri in Texas, is not represented; the coupling's 7-day and
+    # 14-day windows cover those cases and are set per job with this key.
+    horizon_days: 1
 
 curves:
   # Year curves of the run feeders and common days (K48 with K60, K66, K67).

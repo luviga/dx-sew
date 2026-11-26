@@ -6,13 +6,15 @@ import pandas as pd
 import pytest
 import yaml
 
+from dxsew import config
 from dxsew.runs import settings as coupling_settings
-from dxsew.runs import stage
+from dxsew.runs import stage, trial
 
 SETTINGS = {
     "release": {"prefix": "REL/2018/State/", "load_data_folder": "load_data", "description": "REL v0 State"},
     "staging": {"folder": "STAGED", "parquet_folder": "parquet_data", "opendss_relpath": "base/opendss"},
     "coupling": {"topology_state": "ZZ", "donor_id": "ZZ", "status": "ready"},
+    "runs": {"pipeline_override": {"eulp_release": {"residential": "rel_v0_res"}, "horizon_days": 1}},
 }
 UNIT = {
     "subregion": "P9U",
@@ -77,7 +79,10 @@ def test_settings_folder_for_staged_substations_only(tmp_path):
     registry = yaml.safe_load((folder / "topology_registry.yaml").read_text(encoding="utf-8"))
     assert list(registry["topologies"]) == ["ZZ_P9U_p9uhs1_1247"]
     assert set(registry["topologies"]["ZZ_P9U_p9uhs1_1247"]) == COUPLING_KEYS
-    assert yaml.safe_load((folder / "pipeline_config.yaml").read_text(encoding="utf-8")) == {"peak_day_rule": "given"}
+    assert yaml.safe_load((folder / "pipeline_config.yaml").read_text(encoding="utf-8")) == {
+        "eulp_release": {"residential": "rel_v0_res"}, "horizon_days": 1, "peak_day_rule": "given"
+    }
+    assert "peak_day_rule" not in SETTINGS["runs"]["pipeline_override"]
     loaded = yaml.safe_load((folder / "local.yaml").read_text(encoding="utf-8"))
     assert loaded == {"smart_ds_base": "X:/base", "runs_root": (tmp_path / "runs").as_posix(), "evwatts_extract_dir": "X:/ev"}
     assert (folder / "given_days.csv").read_text(encoding="utf-8").splitlines() == [
@@ -88,6 +93,21 @@ def test_settings_folder_for_staged_substations_only(tmp_path):
     case = yaml.safe_load(cases[0].read_text(encoding="utf-8"))
     assert case["topology_id"] in registry["topologies"] and case["execution"] == {"max_feeders": 3}
     assert written[0] == folder / "local.yaml"
+
+
+def test_settings_folder_pipeline_of_the_setup_equals_the_given_pass(tmp_path):
+    config.use_setup(None)
+    setup = config.setup()
+    days = coupling_settings.given_days(
+        pd.DataFrame({"Season": ["summer", "winter"], "Month": [7, 1], "Day": [15, 15]}), ["f1"]
+    )
+    folder = tmp_path / "settings"
+    coupling_settings.write_settings_folder([UNIT], setup, folder, {"runs_root": "runs"}, days)
+    pipeline = yaml.safe_load((folder / "pipeline_config.yaml").read_text(encoding="utf-8"))
+    assert pipeline == trial.pass_pipeline(setup, "pass_2")
+    assert pipeline["horizon_days"] == 1
+    assert pipeline["eulp_release"] == {"residential": "resstock_amy2018_release_2"}
+    assert pipeline["peak_day_rule"] == "given"
 
 
 def test_runs_root_must_be_absolute_and_days_unique():
